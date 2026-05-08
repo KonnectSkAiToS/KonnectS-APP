@@ -1,0 +1,15 @@
+{
+  "name": "KonnectS",
+  "description": "UK's all-in-one super app for services, marketplace, ride-sharing, and community support with AI assistance.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "AI-powered assistance",
+    "Secure payment processing",
+    "Real-time chat",
+    "Worker verification"
+  ]
+}

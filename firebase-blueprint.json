@@ -1,0 +1,110 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User account information and verification details",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "username": { "type": "string" },
+        "mobileNumber": { "type": "string" },
+        "isWorker": { "type": "boolean" },
+        "workerType": { "type": "string", "enum": ["plumber", "mechanic", "doctor", "electrician", "cleaner", "cab_owner", "other"] },
+        "verificationStatus": { "type": "string", "enum": ["pending", "verified", "rejected", "in_progress"] },
+        "documents": { "type": "array", "items": { "type": "string" } },
+        "rewardsPoints": { "type": "integer" },
+        "referralCode": { "type": "string" },
+        "invitedBy": { "type": "string" },
+        "rating": { "type": "number" },
+        "reviewCount": { "type": "integer" },
+        "savedItems": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "username", "createdAt"]
+    },
+    "Item": {
+      "title": "Marketplace Item",
+      "description": "Items for sale or free",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "sellerId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "price": { "type": "number" },
+        "isFree": { "type": "boolean" },
+        "category": { "type": "string" },
+        "condition": { "type": "string", "enum": ["new", "used_good", "used_fair", "parts"] },
+        "images": { "type": "array", "items": { "type": "string" } },
+        "status": { "type": "string", "enum": ["available", "sold", "deleted", "pending_pickup", "delivered"] },
+        "location": { "type": "object", "properties": { "lat": { "type": "number" }, "lng": { "type": "number" }, "address": { "type": "string" } } },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["sellerId", "title", "price", "isFree", "status", "createdAt"]
+    },
+    "Chat": {
+      "title": "Chat Message",
+      "description": "Messages between users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "senderId": { "type": "string" },
+        "recipientId": { "type": "string" },
+        "text": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["senderId", "recipientId", "text", "timestamp"]
+    },
+    "ServiceBooking": {
+      "title": "Service Booking",
+      "description": "Bookings for services or rides",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "customerId": { "type": "string" },
+        "workerId": { "type": "string" },
+        "serviceType": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "completed", "cancelled", "timed_out"] },
+        "description": { "type": "string" },
+        "price": { "type": "number" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["customerId", "serviceType", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/items/{itemId}": {
+      "schema": "Item",
+      "description": "Marketplace items"
+    },
+    "/offers/{offerId}": {
+      "schema": {
+        "title": "Item Offer",
+        "type": "object",
+        "properties": {
+          "itemId": { "type": "string" },
+          "sellerId": { "type": "string" },
+          "buyerId": { "type": "string" },
+          "offerPrice": { "type": "number" },
+          "status": { "type": "string", "enum": ["pending", "accepted", "rejected"] },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "description": "Price offers on marketplace items"
+    },
+    "/chats/{chatId}/messages/{messageId}": {
+      "schema": "Chat",
+      "description": "Real-time chat messages"
+    },
+    "/bookings/{bookingId}": {
+      "schema": "ServiceBooking",
+      "description": "Service and ride bookings"
+    }
+  }
+}

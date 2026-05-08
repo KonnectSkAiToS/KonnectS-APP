@@ -1,0 +1,151 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // 1. User Rules
+    match /users/{userId} {
+      function isValidUser(data) {
+        return data.keys().hasAll(['uid', 'email', 'username', 'createdAt']) &&
+               data.uid is string && data.uid.size() <= 128 &&
+               data.email is string && data.email.size() <= 256 &&
+               data.username is string && data.username.size() <= 50 &&
+               (!('firstName' in data) || data.firstName is string) &&
+               (!('lastName' in data) || data.lastName is string) &&
+               (!('isWorker' in data) || data.isWorker is bool) &&
+               (!('isOnline' in data) || data.isOnline is bool) &&
+               (!('workerType' in data) || data.workerType is string);
+      }
+
+      allow get: if isSignedIn();
+      allow list: if false; // Users shouldn't be listable normally for privacy
+      allow create: if isOwner(userId) && isValidUser(incoming()) && incoming().createdAt == request.time;
+      allow update: if isOwner(userId) && (
+        // Only allow updating non-critical fields
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'username', 'firstName', 'lastName', 'mobileNumber', 'avatarUrl', 
+          'workerType', 'isWorker', 'isOnline', 'updatedAt', 'savedItems',
+          'verificationStatus', 'verificationStep', 'documents', 'hourlyRate',
+          'isWorkerMode', 'autoAcceptConfig'
+        ]) &&
+        // Security Guard: Prevent user from self-verifying to 'verified'
+        (
+          !incoming().diff(existing()).affectedKeys().hasAny(['verificationStatus']) ||
+          incoming().verificationStatus != 'verified'
+        ) &&
+        isValidUser(incoming()) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().uid == existing().uid &&
+        // If updatedAt is changed, it must be the server time
+        (!incoming().diff(existing()).affectedKeys().hasAny(['updatedAt']) || 
+         incoming().updatedAt == request.time)
+      );
+    }
+
+    // 2. Marketplace Item Rules
+    match /items/{itemId} {
+      function isValidItem(data) {
+        return data.keys().hasAll(['sellerId', 'title', 'price', 'isFree', 'status', 'createdAt']) &&
+               data.sellerId == request.auth.uid &&
+               data.title is string && data.title.size() <= 100 &&
+               data.price is number && (data.isFree ? data.price == 0 : data.price >= 0) &&
+               data.status in ['available', 'sold', 'deleted', 'pending_pickup', 'delivered', 'pending'] &&
+               data.createdAt is timestamp;
+      }
+
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidItem(incoming()) && incoming().createdAt == request.time;
+      allow update: if isSignedIn() && (
+        isOwner(existing().sellerId) && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'price', 'isFree', 'status', 'images', 'location', 'updatedAt']) &&
+          isValidItem(incoming()) &&
+          incoming().createdAt == existing().createdAt
+        ) ||
+        // Allow others to update status (e.g. mark as sold if it's a platform action, but restricted usually)
+        (isOwner(existing().sellerId) && incoming().diff(existing()).affectedKeys().hasAny(['status']))
+      );
+      allow delete: if false; // Soft delete via status
+    }
+
+    // 2.1 Offers Rules
+    match /offers/{offerId} {
+      function isValidOffer(data) {
+        return data.keys().hasAll(['itemId', 'sellerId', 'buyerId', 'offerPrice', 'status', 'createdAt']) &&
+               data.offerPrice is number && data.offerPrice > 0 &&
+               data.status in ['pending', 'accepted', 'rejected'] &&
+               data.createdAt is timestamp;
+      }
+
+      allow read: if isSignedIn() && (isOwner(resource.data.buyerId) || isOwner(resource.data.sellerId));
+      allow create: if isSignedIn() && incoming().buyerId == request.auth.uid && isValidOffer(incoming()) && incoming().createdAt == request.time;
+      allow update: if isSignedIn() && (isOwner(existing().sellerId) || isOwner(existing().buyerId)) && 
+                    incoming().diff(existing()).affectedKeys().hasOnly(['status']) &&
+                    incoming().status in ['accepted', 'rejected'];
+    }
+
+    // 3. Chat Rules
+    match /chats/{chatId}/messages/{messageId} {
+      function isValidMessage(data) {
+        return data.keys().hasAll(['senderId', 'recipientId', 'text', 'timestamp']) &&
+               data.senderId == request.auth.uid &&
+               data.text is string && data.text.size() <= 1000 &&
+               data.timestamp is timestamp;
+      }
+
+      allow read: if isSignedIn(); // In a real app, restrict to participants
+      allow create: if isSignedIn() && isValidMessage(incoming()) && incoming().timestamp == request.time;
+    }
+
+    // 4. Booking Rules
+    match /bookings/{bookingId} {
+      function isValidBooking(data) {
+        return data.keys().hasAll(['customerId', 'serviceType', 'status', 'createdAt']) &&
+               data.customerId is string &&
+               data.serviceType is string && data.serviceType.size() <= 100 &&
+               data.status in ['pending', 'accepted', 'completed', 'cancelled', 'timed_out', 'negotiating'] &&
+               data.createdAt is timestamp &&
+               (!('suggestedPrice' in data) || data.suggestedPrice is number) &&
+               (!('estimatedCompletionTime' in data) || data.estimatedCompletionTime is string);
+      }
+
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && incoming().customerId == request.auth.uid && 
+                    isValidBooking(incoming()) && incoming().createdAt == request.time;
+      allow update: if isSignedIn() && (
+        // Customer actions
+        (isOwner(existing().customerId) && 
+         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'description', 'updatedAt', 'suggestedPrice'])) ||
+        // Worker actions (accepting or countering)
+        (incoming().diff(existing()).affectedKeys().hasAny(['workerId', 'status', 'suggestedPrice', 'estimatedCompletionTime', 'updatedAt']) && 
+         (incoming().status in ['accepted', 'negotiating'])) ||
+        // Assigned worker actions
+        (existing().workerId != null && isOwner(existing().workerId) && 
+         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+      ) && isValidBooking(incoming()) && incoming().createdAt == existing().createdAt;
+    }
+  }
+}
