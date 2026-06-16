@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { LanguageProvider } from './contexts/LanguageContext';
 import { Navigation } from './components/Navigation';
 import { HomeView } from './components/HomeView';
 import { MarketplaceView } from './components/MarketplaceView';
@@ -15,7 +16,11 @@ import { LoginView } from './components/LoginView';
 import { WorkerView } from './components/WorkerView';
 import { GeminiAssistant } from './components/GeminiAssistant';
 import { ChatView } from './components/ChatView';
+import { GlobalVoiceCommand } from './components/GlobalVoiceCommand';
 import { motion, AnimatePresence } from 'framer-motion';
+import { startBookingNotificationListener, listenToRideLocalChanges, NotificationItem, startScheduledRideNotificationChecker } from './services/notificationService';
+import { Bell, AlertCircle, Check } from 'lucide-react';
+import { GuidedTour } from './components/GuidedTour';
 
 type Tab = 'home' | 'marketplace' | 'services' | 'rides' | 'profile';
 
@@ -23,6 +28,109 @@ function AppContent() {
   const { user, profile, loading } = useAuth();
   const [activeTab, setActiveTab] = useState<Tab>('home');
   const [chattingWith, setChattingWith] = useState<{ id: string; name: string } | null>(null);
+  const [toastNotification, setToastNotification] = useState<NotificationItem | null>(null);
+  const [showGuidedTour, setShowGuidedTour] = useState(false);
+
+  // Sync and apply layout parameters
+  useEffect(() => {
+    const applyAllThemes = () => {
+      const selectedTheme = localStorage.getItem('appearance_theme') || 'light';
+      
+      // Clean previous classes
+      document.documentElement.classList.remove('dark', 'high-contrast', 'eye-protection');
+      
+      if (selectedTheme === 'dark') {
+        document.documentElement.classList.add('dark');
+      } else if (selectedTheme === 'high-contrast') {
+        document.documentElement.classList.add('high-contrast');
+      } else if (selectedTheme === 'eye-protection') {
+        document.documentElement.classList.add('eye-protection');
+      } else if (selectedTheme === 'system') {
+        const prefdark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (prefdark) {
+          document.documentElement.classList.add('dark');
+        }
+      }
+    };
+
+    applyAllThemes();
+
+    // Listen to theme changes from SettingsEditor
+    const handleThemeChange = () => {
+      applyAllThemes();
+    };
+
+    window.addEventListener('appearance_theme_updated', handleThemeChange);
+    return () => window.removeEventListener('appearance_theme_updated', handleThemeChange);
+  }, []);
+
+  useEffect(() => {
+    const scale = profile?.accessibilityFontScale || localStorage.getItem('accessibilityFontScale') || 'normal';
+    let size = '16px';
+    if (scale === 'large') size = '18.5px';
+    else if (scale === 'xlarge') size = '21px';
+    document.documentElement.style.fontSize = size;
+  }, [profile?.accessibilityFontScale]);
+
+  // Handle tour popup trigger for first login
+  useEffect(() => {
+    if (user?.uid) {
+      const isCompleted = localStorage.getItem(`urbanNet_tour_completed_${user.uid}`) === 'true';
+      if (!isCompleted) {
+        // Delay slightly for smooth modal entrance trigger
+        const handle = setTimeout(() => setShowGuidedTour(true), 1500);
+        return () => clearTimeout(handle);
+      }
+    }
+  }, [user]);
+
+  // Hook up booking & ride status update listeners and 15m schedule checker in background
+  useEffect(() => {
+    if (!user?.uid) return;
+    const unsubBookings = startBookingNotificationListener(user.uid);
+    const unsubRides = listenToRideLocalChanges();
+    const unsubScheduledChecker = startScheduledRideNotificationChecker();
+
+    return () => {
+      unsubBookings();
+      unsubRides();
+      unsubScheduledChecker();
+    };
+  }, [user]);
+
+  // Setup toast notifier handler
+  useEffect(() => {
+    let timer: any;
+    const handleNewNotification = (e: Event) => {
+      const customEvent = e as CustomEvent<NotificationItem>;
+      if (customEvent.detail) {
+        setToastNotification(customEvent.detail);
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => {
+          setToastNotification(null);
+        }, 5000);
+      }
+    };
+    window.addEventListener('urbanNet_new_notification', handleNewNotification);
+    return () => {
+      window.removeEventListener('urbanNet_new_notification', handleNewNotification);
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    (window as any).__navigateTab = (tab: Tab) => {
+      setActiveTab(tab);
+    };
+    (window as any).__setGlobalSearchTerm = (tab: Tab, term: string) => {
+      (window as any).__globalSearchTerm = term;
+      setActiveTab(tab);
+      window.dispatchEvent(new CustomEvent('global-search', { detail: { tab, term } }));
+    };
+    (window as any).__openSupportChat = () => {
+      setChattingWith({ id: 'support_moderator_1', name: 'Support Moderator' });
+    };
+  }, []);
 
   if (loading) {
     return (
@@ -57,6 +165,7 @@ function AppContent() {
       <AnimatePresence mode="wait">
         <motion.div
           key={activeTab + (profile?.isWorkerMode ? '-worker' : '-customer')}
+          layoutId="active-view-container"
           initial={{ opacity: 0, x: 10 }}
           animate={{ opacity: 1, x: 0 }}
           exit={{ opacity: 0, x: -10 }}
@@ -68,6 +177,33 @@ function AppContent() {
       
       <Navigation activeTab={activeTab} setActiveTab={setActiveTab} />
       <GeminiAssistant />
+      <GlobalVoiceCommand />
+
+      {/* Real-time Global Toast Alert Overlay */}
+      <AnimatePresence>
+        {toastNotification && (
+          <motion.div
+            initial={{ opacity: 0, y: -50, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            transition={{ type: "spring", stiffness: 350, damping: 25 }}
+            className="fixed top-4 left-4 right-4 z-[9999] max-w-md mx-auto p-4 bg-slate-900 border border-indigo-500/30 text-white rounded-3xl shadow-2xl flex items-start space-x-3 cursor-pointer select-none"
+            onClick={() => setToastNotification(null)}
+          >
+            <div className="p-2 bg-indigo-500/20 text-indigo-400 rounded-2xl shrink-0 mt-0.5">
+              {toastNotification.type === 'booking' ? <Check size={18} /> : <Bell size={18} />}
+            </div>
+            <div className="flex-1 min-w-0">
+              <h4 className="text-xs font-black uppercase tracking-wider text-indigo-300">
+                {toastNotification.title}
+              </h4>
+              <p className="text-[11px] text-slate-350 leading-relaxed font-bold mt-0.5">
+                {toastNotification.message}
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {chattingWith && (
@@ -78,6 +214,15 @@ function AppContent() {
           />
         )}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {showGuidedTour && user?.uid && (
+          <GuidedTour 
+            userId={user.uid} 
+            onClose={() => setShowGuidedTour(false)} 
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -85,7 +230,9 @@ function AppContent() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <LanguageProvider>
+        <AppContent />
+      </LanguageProvider>
     </AuthProvider>
   );
 }

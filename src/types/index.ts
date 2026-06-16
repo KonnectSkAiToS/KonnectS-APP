@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export type WorkerType = 'plumber' | 'mechanic' | 'doctor' | 'electrician' | 'cleaner' | 'cab_owner' | 'other';
+export type WorkerType = 'plumber' | 'mechanic' | 'doctor' | 'electrician' | 'cleaner' | 'cab_owner' | 'security' | 'other';
 export type VerificationStatus = 'pending' | 'verified' | 'rejected' | 'in_progress';
 export type ItemStatus = 'available' | 'sold' | 'deleted' | 'pending_pickup' | 'delivered';
 export type ItemCondition = 'new' | 'used_good' | 'used_fair' | 'parts';
@@ -20,6 +20,7 @@ export interface UserProfile {
   gender?: string;
   avatarUrl?: string;
   mobileNumber?: string;
+  bio?: string;
   isWorker: boolean;
   isWorkerMode?: boolean; 
   workerType?: WorkerType;
@@ -31,15 +32,36 @@ export interface UserProfile {
   invitedBy?: string;
   hourlyRate?: number;
   isOnline?: boolean;
+  availabilityStatus?: 'Active' | 'Busy';
+  appLanguage?: string;
+  referredUsersCount?: number;
+  discountBalance?: number;
   rating?: number;
   reviewCount?: number;
   savedItems?: string[];
+  location?: {
+    lat: number;
+    lng: number;
+    address: string;
+  };
   autoAcceptConfig?: {
     enabled: boolean;
     maxPrice?: number;
     minPrice?: number;
     serviceTypes?: string[];
   };
+  priceDropNotificationsEnabled?: boolean;
+  quietHoursEnabled?: boolean;
+  quietHoursStart?: string;
+  quietHoursEnd?: string;
+  accessibilityFontScale?: 'normal' | 'large' | 'xlarge';
+  accessibilityHighContrast?: boolean;
+  darkMode?: boolean;
+  savedAddresses?: Array<{ id: string; label: string; address: string }>;
+  carbonSavingsKg?: number;
+  earnedBadges?: string[];
+  isPremiumWorker?: boolean;
+  premiumExpiryDate?: string;
   createdAt: any;
 }
 
@@ -54,6 +76,8 @@ export interface MarketplaceItem {
   images?: string[];
   status: ItemStatus;
   condition?: ItemCondition;
+  tags?: string[];
+  summary?: string;
   location?: {
     lat: number;
     lng: number;
@@ -90,6 +114,7 @@ export interface ServiceBooking {
   expiresAt: any;
   createdAt: any;
   updatedAt?: any;
+  autoRenew?: boolean;
 }
 
 export interface RideRequest {
@@ -108,6 +133,8 @@ export interface ChatMessage {
   id: string;
   senderId: string;
   recipientId: string;
+  roomId: string;
+  participants: string[];
   text: string;
   timestamp: any;
 }

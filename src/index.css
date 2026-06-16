@@ -11,7 +11,192 @@
 }
 
 body {
-  @apply bg-bg text-slate-900 font-sans antialiased overflow-x-hidden;
+  @apply bg-bg text-slate-900 font-sans antialiased overflow-x-hidden transition-colors duration-200;
+}
+
+/* Global Dark Mode Overrides */
+.dark body {
+  background-color: #0c1020 !important;
+  color: #f1f5f9 !important;
+}
+
+.dark .bg-white,
+.dark .bg-slate-50\/50 {
+  background-color: #161c2e !important;
+}
+
+.dark .text-slate-900,
+.dark .text-slate-800,
+.dark .text-slate-750,
+.dark .text-slate-850 {
+  color: #f1f5f9 !important;
+}
+
+.dark .text-slate-500,
+.dark .text-slate-400 {
+  color: #94a3b8 !important;
+}
+
+.dark .bg-slate-50,
+.dark .bg-slate-100 {
+  background-color: #1e293b !important;
+}
+
+.dark .text-slate-600,
+.dark .text-slate-700 {
+  color: #cbd5e1 !important;
+}
+
+.dark .border-slate-100,
+.dark .border-slate-200,
+.dark .border-slate-150,
+.dark .border-transparent {
+  border-color: #334155 !important;
+}
+
+.dark input, 
+.dark select, 
+.dark textarea {
+  background-color: #1e293b !important;
+  color: #f8fafc !important;
+  border-color: #475569 !important;
+}
+
+.dark .shadow-sm {
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.5) !important;
+}
+
+/* Global High Contrast Overrides */
+.high-contrast {
+  --color-brand: #0000ff !important;
+  --color-brand-light: #2563eb !important;
+  --color-bg: #ffffff !important;
+}
+
+/* Eye Protection Mode overrides */
+.eye-protection body {
+  background-color: #FAF4E8 !important;
+  color: #2F2414 !important;
+}
+.eye-protection .bg-white,
+.eye-protection .bg-slate-50\/50,
+.eye-protection .bg-slate-50,
+.eye-protection .bg-slate-100 {
+  background-color: #FCF9F1 !important;
+  color: #2F2414 !important;
+}
+.eye-protection h1,
+.eye-protection h2,
+.eye-protection h3,
+.eye-protection h4,
+.eye-protection p,
+.eye-protection span,
+.eye-protection div {
+  color: #2F2414 !important;
+}
+.eye-protection input,
+.eye-protection select,
+.eye-protection textarea {
+  background-color: #FCF9F1 !important;
+  color: #2F2414 !important;
+  border-color: #DCD0B4 !important;
+}
+
+.high-contrast body {
+  color: #000000 !important;
+  background-color: #ffffff !important;
+}
+
+.high-contrast .bg-white,
+.high-contrast .bg-slate-50,
+.high-contrast .bg-slate-50\/50,
+.high-contrast .bg-slate-100,
+.high-contrast .bg-indigo-50,
+.high-contrast .bg-emerald-50,
+.high-contrast .bg-amber-50,
+.high-contrast .bg-rose-50 {
+  background-color: #ffffff !important;
+}
+
+.high-contrast .text-slate-900,
+.high-contrast .text-slate-800,
+.high-contrast .text-slate-700,
+.high-contrast .text-slate-600,
+.high-contrast .text-slate-500,
+.high-contrast .text-slate-400,
+.high-contrast .text-indigo-600,
+.high-contrast .text-emerald-600,
+.high-contrast .text-amber-600,
+.high-contrast .text-rose-600,
+.high-contrast .text-[#f43f5e] {
+  color: #000000 !important;
+}
+
+.high-contrast .border,
+.high-contrast .border-dashed,
+.high-contrast .border-slate-100,
+.high-contrast .border-slate-200,
+.high-contrast .border-rose-100,
+.high-contrast .border-emerald-100,
+.high-contrast .border-indigo-100 {
+  border: 2px solid #000000 !important;
+}
+
+.high-contrast h1,
+.high-contrast h2,
+.high-contrast h3,
+.high-contrast h4,
+.high-contrast h5,
+.high-contrast h6,
+.high-contrast p,
+.high-contrast span,
+.high-contrast label {
+  color: #000000 !important;
+  font-weight: 700 !important;
+}
+
+.high-contrast button {
+  border: 2px solid #000000 !important;
+  background-color: #ffffff !important;
+  color: #000000 !important;
+  font-weight: 900 !important;
+  text-transform: uppercase !important;
+}
+
+/* Dark Mode + High Contrast combined (Retro Mono Terminal) */
+.dark.high-contrast body {
+  color: #ffffff !important;
+  background-color: #000000 !important;
+}
+
+.dark.high-contrast .bg-white,
+.dark.high-contrast .bg-slate-50,
+.dark.high-contrast .bg-slate-50\/50,
+.dark.high-contrast .bg-slate-800,
+.dark.high-contrast .bg-slate-900 {
+  background-color: #000000 !important;
+}
+
+.dark.high-contrast .border,
+.dark.high-contrast .border-slate-800,
+.dark.high-contrast .border-slate-700,
+.dark.high-contrast .border-slate-100 {
+  border: 2px solid #ffffff !important;
+}
+
+.dark.high-contrast h1,
+.dark.high-contrast h2,
+.dark.high-contrast h3,
+.dark.high-contrast h4,
+.dark.high-contrast p,
+.dark.high-contrast span {
+  color: #ffffff !important;
+}
+
+.dark.high-contrast button {
+  border: 2px solid #ffffff !important;
+  background-color: #000000 !important;
+  color: #ffffff !important;
 }
 
 /* Custom scrollbar for a cleaner look */
@@ -28,3 +213,14 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
+
+/* AR path draw-in effect on card/group hover */
+.ar-path-draw {
+  stroke-dasharray: 80;
+  stroke-dashoffset: 80;
+  transition: stroke-dashoffset 0.6s ease-in-out, stroke 0.3s ease;
+}
+.group:hover .ar-path-draw {
+  stroke-dashoffset: 0;
+}
+

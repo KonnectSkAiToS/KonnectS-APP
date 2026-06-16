@@ -12,6 +12,7 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+export { firebaseConfig };
 
 // Connection test as required by instructions
 async function testConnection() {

@@ -51,10 +51,12 @@
         "id": { "type": "string" },
         "senderId": { "type": "string" },
         "recipientId": { "type": "string" },
+        "participants": { "type": "array", "items": { "type": "string" } },
+        "roomId": { "type": "string" },
         "text": { "type": "string" },
         "timestamp": { "type": "string", "format": "date-time" }
       },
-      "required": ["senderId", "recipientId", "text", "timestamp"]
+      "required": ["senderId", "recipientId", "participants", "text", "timestamp", "roomId"]
     },
     "ServiceBooking": {
       "title": "Service Booking",
@@ -72,6 +74,112 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["customerId", "serviceType", "status", "createdAt"]
+    },
+    "ArSnapshot": {
+      "title": "AR Snapshot",
+      "description": "Saved room placement snapshots with camera AR visuals",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "itemId": { "type": "string" },
+        "itemTitle": { "type": "string" },
+        "itemCategory": { "type": "string" },
+        "itemImage": { "type": "string" },
+        "scale": { "type": "number" },
+        "rotate": { "type": "number" },
+        "offset": { "type": "object", "properties": { "x": { "type": "number" }, "y": { "type": "number" } } },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "itemId", "itemTitle", "scale", "rotate", "offset", "timestamp"]
+    },
+    "ArLibraryPlacement": {
+      "title": "AR Library Placement",
+      "description": "User's favorite synced object configurations per item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "itemId": { "type": "string" },
+        "arScale": { "type": "number" },
+        "arRotate": { "type": "number" },
+        "arDragOffset": { "type": "object", "properties": { "x": { "type": "number" }, "y": { "type": "number" } } },
+        "savedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "itemId", "arScale", "arRotate", "arDragOffset", "savedAt"]
+    },
+    "Review": {
+      "title": "Rating Review",
+      "description": "User-submitted star rating and text review for items or workers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "username": { "type": "string" },
+        "targetId": { "type": "string" },
+        "targetType": { "type": "string", "enum": ["product", "provider"] },
+        "rating": { "type": "number" },
+        "comment": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "targetId", "targetType", "rating", "comment", "createdAt"]
+    },
+    "SkillSwapLedger": {
+      "title": "Skill Swap Ledger",
+      "description": "A time-based hours ledger to track skill exchanges without physical money",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userFromId": { "type": "string" },
+        "userFromName": { "type": "string" },
+        "userToId": { "type": "string" },
+        "userToName": { "type": "string" },
+        "hoursTraded": { "type": "number" },
+        "serviceDetails": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "cleared", "disputed"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userFromId", "userToId", "hoursTraded", "serviceDetails", "createdAt"]
+    },
+    "CrmClient": {
+      "title": "Independent Contractor Client Profile",
+      "description": "Tracks client pipeline, maintenance log services, and checkup triggers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "workerId": { "type": "string" },
+        "clientId": { "type": "string" },
+        "clientName": { "type": "string" },
+        "clientEmail": { "type": "string" },
+        "clientPhone": { "type": "string" },
+        "pipelineStatus": { "type": "string", "enum": ["lead", "active", "check-up", "maintenance"] },
+        "serviceHistory": { "type": "array", "items": { "type": "string" } },
+        "automatedReminders": { "type": "boolean" },
+        "checkupFrequencyMonths": { "type": "integer" },
+        "lastContactedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["workerId", "clientName", "pipelineStatus", "createdAt"]
+    },
+    "P2pRental": {
+      "title": "Peer-to-Peer Equipment Rental",
+      "description": "Equipment sharing logs with secured escrow holds for damage liability",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "ownerName": { "type": "string" },
+        "renterId": { "type": "string" },
+        "renterName": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "pricePerDay": { "type": "number" },
+        "escrowAmount": { "type": "number" },
+        "rentalDays": { "type": "integer" },
+        "status": { "type": "string", "enum": ["available", "requested", "active_escrow", "completed", "disputed"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "title", "pricePerDay", "escrowAmount", "status", "createdAt"]
     }
   },
   "firestore": {
@@ -98,13 +206,54 @@
       },
       "description": "Price offers on marketplace items"
     },
-    "/chats/{chatId}/messages/{messageId}": {
+    "/chats/{messageId}": {
       "schema": "Chat",
       "description": "Real-time chat messages"
     },
     "/bookings/{bookingId}": {
       "schema": "ServiceBooking",
       "description": "Service and ride bookings"
+    },
+    "/ar_snapshots/{snapshotId}": {
+      "schema": "ArSnapshot",
+      "description": "AR snapshots for physical room placements"
+    },
+    "/ar_library/{placementId}": {
+      "schema": "ArLibraryPlacement",
+      "description": "User favorite AR library object placements per item"
+    },
+    "/sos_alerts/{alertId}": {
+      "schema": {
+        "title": "SOS Emergency Warning Alert",
+        "type": "object",
+        "properties": {
+          "userId": { "type": "string" },
+          "userName": { "type": "string" },
+          "contactName": { "type": "string" },
+          "contactPhone": { "type": "string" },
+          "status": { "type": "string", "enum": ["active", "resolved"] },
+          "coords": { "type": "object", "properties": { "lat": { "type": "number" }, "lng": { "type": "number" } } },
+          "address": { "type": "string" },
+          "triggeredAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "description": "Emergency alerts and fast location tracking broadcasts"
+    },
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Ratings and text-reviews for items or providers"
+    },
+    "/ledgers/{ledgerId}": {
+      "schema": "SkillSwapLedger",
+      "description": "Internal cashless trade ledgers"
+    },
+    "/crm_clients/{crmId}": {
+      "schema": "CrmClient",
+      "description": "Independent worker CRM pipelines"
+    },
+    "/rentals/{rentalId}": {
+      "schema": "P2pRental",
+      "description": "Secured peer-to-peer rentals"
     }
   }
 }

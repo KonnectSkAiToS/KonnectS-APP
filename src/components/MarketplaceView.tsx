@@ -1,20 +1,59 @@
 import { useState, useEffect } from 'react';
-import { ShoppingBag, Search, Filter, Plus, Tag, MapPin, Star, Clock, ChevronRight, X, DollarSign, Package, Image as ImageIcon, Navigation, User, Heart, ChevronLeft, ShoppingCart, ShieldCheck, ArrowLeft } from 'lucide-react';
+import { ShoppingBag, Search, Filter, Plus, Tag, MapPin, Star, Clock, ChevronRight, X, DollarSign, Package, Image as ImageIcon, Navigation, User, Heart, ChevronLeft, ShoppingCart, ShieldCheck, ArrowLeft, Sparkles, Trash, Mic, ChevronDown, Award, Camera } from 'lucide-react';
+import { QRScannerModal } from './QRScannerModal';
 import { motion, AnimatePresence } from 'framer-motion';
 import { collection, query, where, getDocs, orderBy, onSnapshot, doc, updateDoc, addDoc, serverTimestamp, getDoc, arrayUnion, arrayRemove, setDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { MarketplaceItem, ItemStatus, UserProfile, ItemCondition } from '../types';
+import { haptics } from '../utils/haptics';
+
+import { MarketplaceItemCard } from './MarketplaceItemCard';
+import { Testimonials } from './Testimonials';
 
 export function MarketplaceView() {
   const { user, profile } = useAuth();
   const [items, setItems] = useState<MarketplaceItem[]>([]);
   const [activeFilter, setActiveFilter] = useState('all');
+  const [onlyVerified, setOnlyVerified] = useState(false);
+  const [filterToday, setFilterToday] = useState(false);
+  const [filterTopRated, setFilterTopRated] = useState(false);
+  const [filterDistance, setFilterDistance] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [showQRScanner, setShowQRScanner] = useState(false);
+
+  const [searchHistory, setSearchHistory] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem('konnects_marketplace_searches');
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const saveSearchToHistory = (term: string) => {
+    const trimmed = term.trim();
+    if (!trimmed) return;
+    setSearchHistory(prev => {
+      const filtered = prev.filter(x => x.toLowerCase() !== trimmed.toLowerCase());
+      const updated = [trimmed, ...filtered].slice(0, 6);
+      localStorage.setItem('konnects_marketplace_searches', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const removeSearchFromHistory = (termToRemove: string) => {
+    setSearchHistory(prev => {
+      const updated = prev.filter(x => x !== termToRemove);
+      localStorage.setItem('konnects_marketplace_searches', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
   const [locationSearch, setLocationSearch] = useState('');
   const [sellerSearch, setSellerSearch] = useState('');
   const [minPrice, setMinPrice] = useState<number>(0);
-  const [maxPrice, setMaxPrice] = useState<number>(10000);
+  const [maxPrice, setMaxPrice] = useState<number>(1000000);
   const [selectedCondition, setSelectedCondition] = useState<ItemCondition | 'all'>('all');
   const [showFilters, setShowFilters] = useState(false);
   const [openAccordion, setOpenAccordion] = useState<string | null>(null);
@@ -23,18 +62,247 @@ export function MarketplaceView() {
   const [sellerProfiles, setSellerProfiles] = useState<Record<string, UserProfile>>({});
   const [userLocation, setUserLocation] = useState<{lat: number, lng: number} | null>(null);
   const [sortByDistance, setSortByDistance] = useState(false);
+  const [distanceMap, setDistanceMap] = useState<Record<string, number>>({});
   
   // Shopping Cart
   const [cart, setCart] = useState<MarketplaceItem[]>([]);
+
+  // Checkout & Group Order States
+  const [shippingMethod, setShippingMethod] = useState<'individual' | 'group'>('group');
+  const [selectedHub, setSelectedHub] = useState<string>('hoxton');
+  const [isCreatingNewHub, setIsCreatingNewHub] = useState<boolean>(false);
+  const [newHubName, setNewHubName] = useState<string>('');
+  const [newHubCode, setNewHubCode] = useState<string>('');
+  const [addedNeighborsCount, setAddedNeighborsCount] = useState<number>(2); // slider simulation
+  const [checkoutSuccess, setCheckoutSuccess] = useState<boolean>(false);
+  const [lastOrderDetails, setLastOrderDetails] = useState<any>(null);
+
+  // Hands-free voice search states
+  const [isListeningVoice, setIsListeningVoice] = useState(false);
+  const [voiceToast, setVoiceToast] = useState<string | null>(null);
+  const [reviewingItem, setReviewingItem] = useState<any | null>(null);
+
+  const toggleSpeechSearch = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('Speech Recognition (Web Speech API) is not supported in this browser. Please try Chrome or Safari.');
+      return;
+    }
+    if (isListeningVoice) {
+      setIsListeningVoice(false);
+      return;
+    }
+
+    const rec = new SpeechRecognition();
+    rec.continuous = false;
+    rec.interimResults = false;
+    rec.lang = 'en-GB';
+
+    rec.onstart = () => {
+      setIsListeningVoice(true);
+      setVoiceToast("Listening hands-free...");
+      haptics.light();
+    };
+
+    rec.onerror = () => {
+      setIsListeningVoice(false);
+      setVoiceToast("Did not catch that. Try again.");
+      setTimeout(() => setVoiceToast(null), 2500);
+    };
+
+    rec.onend = () => {
+      setIsListeningVoice(false);
+    };
+
+    rec.onresult = (event: any) => {
+      const text = event.results[0][0].transcript;
+      setSearchTerm(text);
+      setVoiceToast(`Searching: "${text}"`);
+      saveSearchToHistory(text);
+      haptics.heavy();
+      setTimeout(() => setVoiceToast(null), 3000);
+    };
+
+    rec.start();
+  };
+
+  const removeFromCart = (itemId: string) => {
+    setCart(prev => prev.filter(item => item.id !== itemId));
+    haptics.light();
+  };
   
   // Make Offer State
   const [offerModalItem, setOfferModalItem] = useState<MarketplaceItem | null>(null);
   const [offerPrice, setOfferPrice] = useState<string>('');
   
-  // Image Upload State
+  // Create Listing State
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newTitle, setNewTitle] = useState('');
+  const [newDesc, setNewDesc] = useState('');
+  const [newPrice, setNewPrice] = useState('');
+  const [newCategory, setNewCategory] = useState('other');
+  const [newCondition, setNewCondition] = useState<ItemCondition>('used_good');
+  const [newImages, setNewImages] = useState<string[]>([]);
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadingItem, setUploadingItem] = useState<string | null>(null);
 
-  const filters = ['all', 'food', 'clothing', 'electronics', 'furniture'];
+  // Bulk Selection & Action States
+  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+
+  // Gemini tags & summary states
+  const [newTags, setNewTags] = useState<string[]>([]);
+  const [newSummary, setNewSummary] = useState('');
+  const [isGeneratingTagsSummary, setIsGeneratingTagsSummary] = useState(false);
+
+  // Clear bulk selection on tab changes
+  useEffect(() => {
+    setSelectedItemIds([]);
+  }, [tab]);
+
+  const toggleSelectItem = (id: string) => {
+    setSelectedItemIds(prev => 
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
+  const handleBulkUpdateStatus = async (status: ItemStatus) => {
+    if (selectedItemIds.length === 0) return;
+    try {
+      await Promise.all(selectedItemIds.map(id => 
+        updateDoc(doc(db, 'items', id), { status })
+      ));
+      setSelectedItemIds([]);
+      alert(`Successfully updated status for ${selectedItemIds.length} listings!`);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to perform bulk update status.");
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedItemIds.length === 0) return;
+    try {
+      await Promise.all(selectedItemIds.map(id => 
+        updateDoc(doc(db, 'items', id), { status: 'deleted' })
+      ));
+      setSelectedItemIds([]);
+      setShowBulkDeleteConfirm(false);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to perform bulk delete.");
+    }
+  };
+
+  const generateTagsAndSummary = async () => {
+    if (!newTitle || !newDesc) {
+      alert("Please fill in both the Title and Description first so Gemini can analyze the item!");
+      return;
+    }
+    setIsGeneratingTagsSummary(true);
+    try {
+      const response = await fetch('/api/gemini/generate-tags-summary', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          title: newTitle,
+          description: newDesc
+        })
+      });
+      const data = await response.json();
+      if (data.tags && Array.isArray(data.tags)) {
+        setNewTags(data.tags);
+      }
+      if (data.summary) {
+        setNewSummary(data.summary);
+      }
+    } catch (err) {
+      console.error("Failed to generate tags & summary", err);
+      alert("Failed to analyze product details using Gemini. Please check your connectivity or API Key configuration.");
+    } finally {
+      setIsGeneratingTagsSummary(false);
+    }
+  };
+
+  const filters = ['all', 'food', 'clothing', 'electronics', 'furniture', 'other'];
+
+  const handleCreateListing = async () => {
+    if (!user || !newTitle || !newPrice) return;
+    setIsSubmitting(true);
+    try {
+      await addDoc(collection(db, 'items'), {
+        title: newTitle,
+        description: newDesc,
+        price: Number(newPrice),
+        isFree: Number(newPrice) === 0,
+        category: newCategory,
+        condition: newCondition,
+        images: newImages,
+        sellerId: user.uid,
+        status: 'available',
+        tags: newTags,
+        summary: newSummary,
+        createdAt: serverTimestamp(),
+        location: profile?.location || { address: 'London, UK', lat: 51.5074, lng: -0.1278 }
+      });
+      setShowCreateModal(false);
+      setNewTitle('');
+      setNewDesc('');
+      setNewPrice('');
+      setNewImages([]);
+      setNewTags([]);
+      setNewSummary('');
+    } catch (e) {
+      handleFirestoreError(e, OperationType.CREATE, 'items');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const generateAIImage = async () => {
+    if (!newTitle) return;
+    setIsGeneratingImage(true);
+    try {
+      const response = await fetch('/api/gemini/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: `A high quality marketplace product photo of: ${newTitle}. ${newDesc}`, aspectRatio: "4:3" })
+      });
+      const data = await response.json();
+      if (data.imageUrl) {
+        setNewImages(prev => [...prev, data.imageUrl]);
+      } else if (data.error) {
+        alert("Image Gen Error: " + data.error);
+      }
+    } catch (e: any) {
+      console.error("AI Gen Failed", e);
+      alert("AI Generation failed. Please check your API key and try again.");
+    } finally {
+      setIsGeneratingImage(false);
+    }
+  };
+
+  const handleShare = async (item: MarketplaceItem) => {
+    const shareData = {
+      title: item.title,
+      text: `Check out this ${item.title} on KonnectS for £${item.price}!`,
+      url: window.location.href
+    };
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+      } else {
+        await navigator.clipboard.writeText(`${shareData.text} ${shareData.url}`);
+        alert('Link copied to clipboard!');
+      }
+    } catch (err) {
+      console.error('Share failed', err);
+    }
+  };
+
   const conditions: {val: ItemCondition | 'all', label: string}[] = [
     { val: 'all', label: 'All Conditions' },
     { val: 'new', label: 'New' },
@@ -43,45 +311,27 @@ export function MarketplaceView() {
     { val: 'parts', label: 'For Parts' }
   ];
 
-  // Helper to initialize the requested demo users
-  useEffect(() => {
-    const initDemoUsers = async () => {
-      const demoUsers = [
-        { uid: 'demo_user_1', username: 'plumber_pro', workerType: 'plumber', verificationStatus: 'verified', isWorker: true, rewardsPoints: 450 },
-        { uid: 'demo_user_2', username: 'dr_john', workerType: 'doctor', verificationStatus: 'in_progress', isWorker: true, rewardsPoints: 120 },
-        { uid: 'demo_user_3', username: 'london_cabs', workerType: 'cab_owner', verificationStatus: 'verified', isWorker: true, rewardsPoints: 890 }
-      ];
-
-      for (const u of demoUsers) {
-        const uRef = doc(db, 'users', u.uid);
-        try {
-          const uSnap = await getDoc(uRef);
-          if (!uSnap.exists()) {
-            await setDoc(uRef, {
-              ...u,
-              email: `${u.username}@example.com`,
-              referralCode: u.uid.toUpperCase(),
-              createdAt: serverTimestamp()
-            });
-          }
-        } catch (e) {
-          console.error("Demo user init failed", e);
-        }
-      }
-    };
-    initDemoUsers();
-  }, []);
-
+  // Marketplace Listings Effect
   useEffect(() => {
     if (sortByDistance && !userLocation) {
-      navigator.geolocation.getCurrentPosition((pos) => {
-        setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-      }, (err) => {
-        console.error("Geolocation error", err);
+      if ("geolocation" in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+          },
+          (err) => {
+            console.error("Geolocation error", err);
+            setSortByDistance(false);
+            alert("Please allow location access to sort by distance.");
+          },
+          { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+        );
+      } else {
         setSortByDistance(false);
-      });
+        alert("Geolocation is not supported by your browser.");
+      }
     }
-  }, [sortByDistance]);
+  }, [sortByDistance, userLocation]);
 
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
     const R = 6371;
@@ -95,6 +345,16 @@ export function MarketplaceView() {
   };
 
   useEffect(() => {
+    // Lead with instantaneous offline persistence fallback
+    const cached = localStorage.getItem('konnects_offline_marketplace_' + tab);
+    if (cached) {
+      try {
+        setItems(JSON.parse(cached));
+      } catch (e) {
+        console.warn('Stale offline cache.', e);
+      }
+    }
+
     let q = query(collection(db, 'items'), orderBy('createdAt', 'desc'));
 
     if (tab === 'browse' || tab === 'cart') {
@@ -110,7 +370,22 @@ export function MarketplaceView() {
         fetchedItems = fetchedItems.filter(item => profile.savedItems?.includes(item.id));
       }
 
+      // Pre-calculate distances if location is available
+      if (userLocation) {
+        const newDistances: Record<string, number> = {};
+        fetchedItems.forEach(item => {
+          if (item.location) {
+            newDistances[item.id] = calculateDistance(
+              userLocation.lat, userLocation.lng,
+              item.location.lat, item.location.lng
+            );
+          }
+        });
+        setDistanceMap(newDistances);
+      }
+
       setItems(fetchedItems);
+      localStorage.setItem('konnects_offline_marketplace_' + tab, JSON.stringify(fetchedItems));
       setLoading(false);
 
       const uniqueSellerIds = Array.from(new Set(fetchedItems.map(i => i.sellerId)));
@@ -125,15 +400,22 @@ export function MarketplaceView() {
       }
       setSellerProfiles(newProfiles);
     }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'items');
+      console.warn('Network snapshot active listener failed, defaulting to persistent offline cache.', err);
+      const fallbackCached = localStorage.getItem('konnects_offline_marketplace_' + tab);
+      if (fallbackCached) {
+        try {
+          setItems(JSON.parse(fallbackCached));
+        } catch (_) {}
+      }
       setLoading(false);
     });
 
     return () => unsubscribe();
   }, [tab, user, profile?.savedItems]);
 
-  const filteredItems = items.filter(item => {
-    const matchesSearch = item.title.toLowerCase().includes(searchTerm.toLowerCase());
+   const filteredItems = items.filter(item => {
+    const matchesSearch = item.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                         item.description?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = activeFilter === 'all' || item.category.toLowerCase() === activeFilter.toLowerCase();
     const matchesLocation = !locationSearch || (item.location?.address.toLowerCase().includes(locationSearch.toLowerCase()));
     const matchesPrice = item.price >= minPrice && item.price <= maxPrice;
@@ -143,12 +425,30 @@ export function MarketplaceView() {
     const matchesSeller = !sellerSearch || 
       item.sellerId.toLowerCase().includes(sellerSearch.toLowerCase()) ||
       seller?.username.toLowerCase().includes(sellerSearch.toLowerCase());
+    
+    const matchesVerified = !onlyVerified || seller?.verificationStatus === 'verified';
 
-    return matchesSearch && matchesCategory && matchesLocation && matchesPrice && matchesCondition && matchesSeller;
+    // Granular Filters:
+    let matchesToday = true;
+    if (filterToday) {
+      if (item.createdAt) {
+        const itemDate = item.createdAt.seconds ? new Date(item.createdAt.seconds * 1000) : new Date(item.createdAt);
+        const today = new Date();
+        matchesToday = itemDate.toDateString() === today.toDateString();
+      } else {
+        matchesToday = true; // Fallback
+      }
+    }
+
+    const matchesTopRated = !filterTopRated || (seller?.rating && seller?.rating >= 4.8);
+
+    const matchesDistance = !filterDistance || (distanceMap[item.id] && distanceMap[item.id] <= 2.0);
+
+    return matchesSearch && matchesCategory && matchesLocation && matchesPrice && matchesCondition && matchesSeller && matchesVerified && matchesToday && matchesTopRated && matchesDistance;
   }).sort((a, b) => {
-    if (sortByDistance && userLocation && a.location && b.location) {
-      const distA = calculateDistance(userLocation.lat, userLocation.lng, a.location.lat, a.location.lng);
-      const distB = calculateDistance(userLocation.lat, userLocation.lng, b.location.lat, b.location.lng);
+    if (sortByDistance && userLocation) {
+      const distA = distanceMap[a.id] || 999999;
+      const distB = distanceMap[b.id] || 999999;
       return distA - distB;
     }
     return 0;
@@ -170,12 +470,17 @@ export function MarketplaceView() {
 
   const handleMakeOffer = async () => {
     if (!offerModalItem || !user) return;
+    if (!offerPrice || Number(offerPrice) <= 0) return;
+
     try {
       await addDoc(collection(db, 'offers'), {
         itemId: offerModalItem.id,
+        itemTitle: offerModalItem.title,
         sellerId: offerModalItem.sellerId,
         buyerId: user.uid,
+        buyerDisplayName: profile?.username || 'User',
         offerPrice: Number(offerPrice),
+        originalPrice: offerModalItem.price,
         status: 'pending',
         createdAt: serverTimestamp()
       });
@@ -191,7 +496,8 @@ export function MarketplaceView() {
     const isSaved = profile.savedItems?.includes(itemId);
     try {
       await updateDoc(doc(db, 'users', user.uid), {
-        savedItems: isSaved ? arrayRemove(itemId) : arrayUnion(itemId)
+        savedItems: isSaved ? arrayRemove(itemId) : arrayUnion(itemId),
+        updatedAt: serverTimestamp()
       });
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `users/${user.uid}`);
@@ -214,11 +520,11 @@ export function MarketplaceView() {
     }
   };
 
-  const renderRating = (sellerId: string) => {
+  const renderRating = (sellerId: string, item?: any) => {
     const profile = sellerProfiles[sellerId];
     if (!profile) return null;
     return (
-      <div className="flex flex-col space-y-1 mt-1">
+      <div className="flex flex-col space-y-1 mt-1 text-left">
         <div className="flex items-center space-x-2">
           <span className="text-[10px] font-black text-slate-900 uppercase">@{profile.username}</span>
           {profile.verificationStatus === 'verified' && (
@@ -228,11 +534,22 @@ export function MarketplaceView() {
              <Clock size={10} className="text-amber-500" />
           )}
         </div>
-        <div className="flex items-center space-x-1">
-          <Star size={10} className="text-amber-400 fill-amber-400" />
-          <span className="text-[10px] font-bold text-slate-700">{profile.rating?.toFixed(1) || '5.0'}</span>
-          <span className="text-[10px] text-slate-400">({profile.reviewCount || 0})</span>
-        </div>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            haptics.light();
+            if (item) {
+              setReviewingItem(item);
+            }
+          }}
+          className="flex items-center space-x-1 border border-transparent hover:bg-slate-100 dark:hover:bg-slate-800 px-1.5 py-0.5 rounded-lg active:scale-95 transition-all text-left bg-transparent cursor-pointer w-fit"
+          title="Click to view & write reviews"
+        >
+          <Star size={10} className="text-amber-400 fill-amber-400 shrink-0" />
+          <span className="text-[10px] font-bold text-slate-705 dark:text-slate-300">{profile.rating?.toFixed(1) || '5.0'}</span>
+          <span className="text-[10px] text-slate-400">({profile.reviewCount || 0}) • <span className="text-indigo-650 font-black uppercase text-[8px]">Reviews</span></span>
+        </button>
       </div>
     );
   };
@@ -268,6 +585,29 @@ export function MarketplaceView() {
 
   return (
     <div className="pb-24 pt-6 px-4 max-w-md mx-auto min-h-screen">
+      <AnimatePresence>
+        {showQRScanner && (
+          <QRScannerModal 
+            mode="products"
+            onClose={() => setShowQRScanner(false)}
+            onScanSuccess={(code) => {
+              setShowQRScanner(false);
+              haptics.success();
+              if (code.includes('DESK')) {
+                setSearchTerm('Desk');
+                alert("Scan Success!\nDetected QR Product Code: " + code + "\nFiltering marketplace for desk items...");
+              } else if (code.includes('CHAIR')) {
+                setSearchTerm('Chair');
+                alert("Scan Success!\nDetected QR Product Code: " + code + "\nFiltering marketplace for seating items...");
+              } else {
+                setSearchTerm(code);
+                alert("Scan Success!\nDetected QR Product Code: " + code);
+              }
+            }}
+          />
+        )}
+      </AnimatePresence>
+
       <header className="flex justify-between items-start mb-6">
         <div className="flex-1">
           <h1 className="text-3xl font-black tracking-tight text-slate-900">Marketplace</h1>
@@ -285,6 +625,17 @@ export function MarketplaceView() {
         </div>
         <div className="flex items-center space-x-2">
           <button 
+            onClick={() => {
+              haptics.medium();
+              setShowQRScanner(true);
+            }}
+            className="p-3 bg-white border border-slate-100 rounded-2xl shadow-sm hover:bg-slate-50 transition-all text-slate-600 cursor-pointer active:scale-95"
+            title="Scan Product"
+          >
+            <Camera size={20} />
+          </button>
+
+          <button 
             onClick={() => setTab('cart')}
             className="p-3 bg-white border border-slate-100 rounded-2xl shadow-sm relative active:scale-95 transition-all text-slate-600"
           >
@@ -295,7 +646,10 @@ export function MarketplaceView() {
               </span>
             )}
           </button>
-          <button className="p-3 bg-slate-900 text-white rounded-2xl shadow-lg active:scale-95 transition-all">
+          <button 
+            onClick={() => setShowCreateModal(true)}
+            className="p-3 bg-slate-900 text-white rounded-2xl shadow-lg active:scale-95 transition-all"
+          >
             <Plus size={20} />
           </button>
         </div>
@@ -303,34 +657,121 @@ export function MarketplaceView() {
 
       {tab !== 'cart' && (
         <>
-          <div className="relative mb-4">
+          <div className="relative mb-3">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  saveSearchToHistory(searchTerm);
+                }
+              }}
               placeholder="Search unique finds..."
-              className="w-full pl-11 pr-4 py-4 bg-white rounded-3xl border border-slate-100 shadow-sm focus:outline-none focus:ring-2 focus:ring-brand font-medium"
+              className="w-full pl-11 pr-12 py-4 bg-white rounded-3xl border border-slate-100 shadow-sm focus:outline-none focus:ring-2 focus:ring-brand font-medium animate-none"
             />
+            <button
+              type="button"
+              onClick={toggleSpeechSearch}
+              className={`absolute right-4 top-1/2 -translate-y-1/2 p-2 rounded-full border-none transition-all cursor-pointer ${
+                isListeningVoice 
+                  ? 'bg-rose-100 text-rose-600 animate-pulse scale-110' 
+                  : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'
+              }`}
+              title="Speak to search (hands-free)"
+            >
+              <Mic size={16} />
+            </button>
           </div>
 
-          <div className="flex space-x-2 mb-6">
+          <AnimatePresence>
+            {voiceToast && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="mb-3 px-4 py-2 bg-slate-900 text-white rounded-2xl text-[10.5px] font-black uppercase tracking-wider flex items-center justify-between"
+              >
+                <div className="flex items-center space-x-2">
+                  <div className="w-2 h-2 bg-rose-500 rounded-full animate-ping" />
+                  <span>{voiceToast}</span>
+                </div>
+                <button onClick={() => setVoiceToast(null)} className="text-white opacity-60 hover:opacity-100 border-none bg-transparent font-black pr-1">✕</button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {searchHistory.length > 0 && (
+            <div className="mb-4">
+              <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Recent Searches</p>
+              <div className="flex flex-wrap gap-1.5">
+                {searchHistory.map((term, idx) => (
+                  <span
+                    key={idx}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 text-slate-700 rounded-full text-[10.5px] font-black transition-all hover:bg-slate-200 cursor-pointer"
+                  >
+                    <span onClick={() => setSearchTerm(term)}>{term}</span>
+                    <button
+                      onClick={() => removeSearchFromHistory(term)}
+                      className="w-3.5 h-3.5 rounded-full bg-slate-200 text-slate-500 hover:bg-slate-300 flex items-center justify-center text-[8px] font-black"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2 mb-6">
             <button 
               onClick={() => setShowFilters(!showFilters)}
-              className={`flex-1 py-3 px-5 rounded-2xl border flex items-center justify-between text-[11px] font-black uppercase tracking-widest transition-all ${showFilters ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-100 shadow-sm text-slate-600'}`}
+              className={`py-3 px-4 rounded-xl border flex items-center space-x-1.5 text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer ${showFilters ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-100 shadow-xs text-slate-600'}`}
             >
-              <div className="flex items-center space-x-2">
-                <Filter size={16} />
-                <span>Filters</span>
-              </div>
-              <ChevronRight size={16} className={`transition-transform ${showFilters ? 'rotate-90' : ''}`} />
+              <Filter size={12} />
+              <span>Filters</span>
+              <ChevronRight size={12} className={`transition-transform ${showFilters ? 'rotate-90' : ''}`} />
             </button>
+            
+            <button 
+              onClick={() => { haptics.light(); setFilterToday(!filterToday); }}
+              className={`py-3 px-4 rounded-xl border flex items-center space-x-1.5 text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer ${filterToday ? 'bg-indigo-600 border-indigo-600 text-white shadow-xs' : 'bg-white border-slate-100 shadow-xs text-slate-600 hover:bg-slate-50'}`}
+            >
+              <Clock size={12} />
+              <span>Today</span>
+            </button>
+
+            <button 
+              onClick={() => { haptics.light(); setFilterTopRated(!filterTopRated); }}
+              className={`py-3 px-4 rounded-xl border flex items-center space-x-1.5 text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer ${filterTopRated ? 'bg-amber-500 border-amber-500 text-white shadow-xs' : 'bg-white border-slate-100 shadow-xs text-slate-600 hover:bg-slate-50'}`}
+            >
+              <Star size={12} fill={filterTopRated ? "currentColor" : "none"} />
+              <span>Top Rated</span>
+            </button>
+
+            <button 
+              onClick={() => { haptics.light(); setFilterDistance(!filterDistance); }}
+              className={`py-3 px-4 rounded-xl border flex items-center space-x-1.5 text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer ${filterDistance ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs' : 'bg-white border-slate-100 shadow-xs text-slate-600 hover:bg-slate-50'}`}
+            >
+              <Navigation size={12} />
+              <span>&lt; 2 miles</span>
+            </button>
+
             <button 
               onClick={() => setSortByDistance(!sortByDistance)}
-              className={`px-5 rounded-2xl border flex items-center space-x-2 text-[11px] font-black uppercase tracking-widest transition-all ${sortByDistance ? 'bg-brand border-brand text-white shadow-xl shadow-brand/20' : 'bg-white border-slate-100 shadow-sm text-slate-600'}`}
+              className={`py-3 px-4 rounded-xl border flex items-center space-x-1.5 text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer ${sortByDistance ? 'bg-brand border-brand text-white shadow-xs' : 'bg-white border-slate-100 shadow-xs text-slate-600 hover:bg-slate-50'}`}
             >
-              <Navigation size={16} />
-              <span>{sortByDistance ? 'Nearest' : 'Distance'}</span>
+              <Navigation size={12} />
+              <span>Nearest</span>
+            </button>
+
+            <button 
+              onClick={() => { haptics.light(); setOnlyVerified(!onlyVerified); }}
+              className={`py-3 px-4 rounded-xl border flex items-center space-x-1.5 text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer ${onlyVerified ? 'bg-teal-600 border-teal-600 text-white shadow-xs' : 'bg-white border-slate-100 shadow-xs text-slate-600 hover:bg-slate-50'}`}
+            >
+              <ShieldCheck size={12} />
+              <span>Verified Only</span>
             </button>
           </div>
 
@@ -369,26 +810,48 @@ export function MarketplaceView() {
                   </AccordionSection>
 
                   <AccordionSection id="price" title="Price Range" icon={DollarSign}>
-                    <div className="grid grid-cols-2 gap-4 p-1">
-                      <div className="relative">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[10px] font-bold">£</span>
-                        <input 
-                          type="number" 
-                          value={minPrice}
-                          onChange={(e) => setMinPrice(Number(e.target.value))}
-                          placeholder="Min"
-                          className="w-full pl-7 p-3 bg-slate-50 rounded-2xl text-[11px] outline-none font-bold"
-                        />
+                    <div className="space-y-4 p-1">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[10px] font-bold">£</span>
+                          <input 
+                            type="number" 
+                            value={minPrice}
+                            onChange={(e) => setMinPrice(Number(e.target.value))}
+                            placeholder="Min"
+                            className="w-full pl-7 p-3 bg-slate-50 rounded-2xl text-[11px] outline-none font-bold"
+                          />
+                        </div>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[10px] font-bold">£</span>
+                          <input 
+                            type="number" 
+                            value={maxPrice}
+                            onChange={(e) => setMaxPrice(Number(e.target.value))}
+                            placeholder="Max"
+                            className="w-full pl-7 p-3 bg-slate-50 rounded-2xl text-[11px] outline-none font-bold"
+                          />
+                        </div>
                       </div>
-                      <div className="relative">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[10px] font-bold">£</span>
-                        <input 
-                          type="number" 
-                          value={maxPrice}
-                          onChange={(e) => setMaxPrice(Number(e.target.value))}
-                          placeholder="Max"
-                          className="w-full pl-7 p-3 bg-slate-50 rounded-2xl text-[11px] outline-none font-bold"
-                        />
+                      <div className="grid grid-cols-3 gap-3">
+                         {[
+                           { label: 'Any', min: 0, max: 1000000 },
+                           { label: '< £10', min: 0, max: 10 },
+                           { label: '£10-£50', min: 10, max: 50 },
+                           { label: '£50-£200', min: 50, max: 200 },
+                           { label: '£200-£500', min: 200, max: 500 },
+                           { label: '£500+', min: 500, max: 1000000 }
+                         ].map(range => (
+                           <button
+                             key={range.label}
+                             onClick={() => { setMinPrice(range.min); setMaxPrice(range.max); }}
+                             className={`px-3 py-2.5 rounded-2xl text-[9px] font-black uppercase tracking-widest border transition-all ${
+                               minPrice === range.min && maxPrice === range.max ? 'bg-slate-900 border-slate-900 text-white shadow-lg' : 'bg-slate-50 border-transparent text-slate-400 hover:bg-slate-100'
+                             }`}
+                           >
+                             {range.label}
+                           </button>
+                         ))}
                       </div>
                     </div>
                   </AccordionSection>
@@ -400,7 +863,7 @@ export function MarketplaceView() {
                           key={c.val}
                           onClick={() => setSelectedCondition(c.val)}
                           className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${
-                            selectedCondition === c.val ? 'bg-brand border-brand text-white' : 'bg-slate-50 border-transparent text-slate-400'
+                            selectedCondition === c.val ? 'bg-slate-900 border-slate-900 text-white shadow-md' : 'bg-slate-50 border-transparent text-slate-400 hover:bg-slate-100'
                           }`}
                         >
                           {c.label}
@@ -415,8 +878,8 @@ export function MarketplaceView() {
                         <button
                           key={f}
                           onClick={() => setActiveFilter(f)}
-                          className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                            activeFilter === f ? 'bg-brand text-white' : 'bg-slate-50 text-slate-400'
+                          className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${
+                            activeFilter === f ? 'bg-slate-900 border-slate-900 text-white shadow-md' : 'bg-slate-50 border-transparent text-slate-400 hover:bg-slate-100'
                           }`}
                         >
                           {f}
@@ -424,6 +887,29 @@ export function MarketplaceView() {
                       ))}
                     </div>
                   </AccordionSection>
+
+                  <div className="mt-6 pt-6 border-t border-slate-50 flex space-x-3">
+                    <button 
+                      onClick={() => {
+                        setSearchTerm('');
+                        setLocationSearch('');
+                        setSellerSearch('');
+                        setMinPrice(0);
+                        setMaxPrice(1000000);
+                        setSelectedCondition('all');
+                        setActiveFilter('all');
+                      }}
+                      className="flex-1 py-4 px-6 bg-slate-50 text-slate-400 text-[10px] font-black uppercase tracking-widest rounded-2xl hover:bg-slate-100 transition-all active:scale-95"
+                    >
+                      Reset All
+                    </button>
+                    <button 
+                      onClick={() => setShowFilters(false)}
+                      className="flex-1 py-4 px-6 bg-brand text-white text-[10px] font-black uppercase tracking-widest rounded-2xl shadow-xl shadow-brand/20 active:scale-95 transition-all"
+                    >
+                      Apply Filters
+                    </button>
+                  </div>
                 </div>
               </motion.div>
             )}
@@ -448,35 +934,339 @@ export function MarketplaceView() {
       )}
 
       {loading ? (
-        <div className="flex justify-center p-12">
-          <div className="w-10 h-10 border-4 border-slate-100 border-t-brand rounded-full animate-spin"></div>
+        <div className="grid grid-cols-2 gap-4">
+          {[1, 2, 3, 4, 5, 6].map((idx) => (
+            <div key={idx} className="bg-white border border-slate-150/50 rounded-[32px] overflow-hidden p-3.5 space-y-4 animate-pulse">
+              {/* Shimmering Image aspect-square */}
+              <div className="aspect-square w-full bg-slate-100 dark:bg-slate-800 rounded-2xl relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full animate-[shimmer_1.5s_infinite]" />
+              </div>
+              {/* Skeleton detail lines */}
+              <div className="space-y-2 px-1.5 pb-1">
+                <div className="h-3 bg-slate-100 dark:bg-slate-800 rounded-full w-5/6" />
+                <div className="h-2.5 bg-slate-50 dark:bg-slate-850 rounded-full w-3/5" />
+                <div className="flex justify-between items-center pt-2">
+                  <div className="h-4 bg-slate-100 dark:bg-slate-800 rounded-full w-1/3" />
+                  <div className="h-6 bg-slate-50 dark:bg-slate-850 rounded-full w-8" />
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4">
-          {(tab === 'cart' ? cart : filteredItems).length === 0 ? (
-            tab !== 'cart' && (
-              <div className="col-span-2 text-center p-16 bg-slate-50 rounded-[60px] border-2 border-dashed border-slate-100">
-                <ShoppingBag size={64} className="mx-auto mb-6 text-slate-100" />
-                <p className="text-sm font-black text-slate-400 uppercase tracking-widest">No listings found</p>
+        <div className="space-y-6">
+          {tab === 'my-listings' && items.length > 0 && (
+            <div className="p-6 bg-indigo-50/50 border border-indigo-100/40 rounded-[35px] flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 bg-indigo-600/10 text-indigo-600 rounded-2xl flex items-center justify-center">
+                  <Package size={18} />
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-xs text-indigo-950 uppercase tracking-widest">Bulk Actions Panel</h4>
+                  <p className="text-[10px] text-indigo-500/80 font-bold tracking-tight">
+                    {selectedItemIds.length} of {items.length} listings selected
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => {
+                    if (selectedItemIds.length === items.length) {
+                      setSelectedItemIds([]);
+                    } else {
+                      setSelectedItemIds(items.map(i => i.id));
+                    }
+                  }}
+                  className="px-3.5 py-2.5 bg-white border border-slate-250/70 text-slate-700 rounded-xl text-[9px] font-black uppercase tracking-wider hover:bg-slate-50 active:scale-95 transition-all"
+                >
+                  {selectedItemIds.length === items.length ? 'Deselect All' : 'Select All'}
+                </button>
+                
+                <button
+                  disabled={selectedItemIds.length === 0}
+                  onClick={() => handleBulkUpdateStatus('sold')}
+                  className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[9px] font-black uppercase tracking-wider active:scale-95 transition-all disabled:opacity-40"
+                >
+                  Mark Sold
+                </button>
+
+                <button
+                  disabled={selectedItemIds.length === 0}
+                  onClick={() => handleBulkUpdateStatus('available')}
+                  className="px-3.5 py-2.5 bg-slate-900 hover:bg-black text-white rounded-xl text-[9px] font-black uppercase tracking-wider active:scale-95 transition-all disabled:opacity-40"
+                >
+                  Mark Live
+                </button>
+
+                <button
+                  disabled={selectedItemIds.length === 0}
+                  onClick={() => setShowBulkDeleteConfirm(true)}
+                  className="px-3.5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-[9px] font-black uppercase tracking-wider active:scale-95 transition-all disabled:opacity-40 flex items-center space-x-1"
+                >
+                  <Trash size={11} className="mr-0.5" />
+                  <span>Delete Selected</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {tab === 'cart' ? (
+            cart.length === 0 ? (
+              <div className="col-span-2 text-center py-20 px-6 bg-slate-50 rounded-[40px] border-2 border-dashed border-slate-100 flex flex-col items-center justify-center">
+                <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-sm mb-4">
+                   <ShoppingBag size={32} className="text-slate-200" />
+                </div>
+                <p className="text-xs font-black text-slate-400 uppercase tracking-widest text-center px-4 leading-relaxed">
+                   Your shopping bag is empty.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-left">
+                {/* Left Column: Cart Items List */}
+                <div className="space-y-4">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">Items in Bag</p>
+                  {cart.map((item) => (
+                    <div key={item.id} className="flex gap-4 p-4.5 bg-white border border-slate-100 rounded-[28px] shadow-xs relative">
+                      <div className="w-20 h-20 rounded-2xl bg-slate-100 relative overflow-hidden shrink-0">
+                        <img 
+                          referrerPolicy="no-referrer"
+                          src={item.images?.[0] || 'https://images.unsplash.com/photo-1592078615290-033ee584e267?auto=format&fit=crop&q=80&w=200'} 
+                          alt={item.title} 
+                          className="w-full h-full object-cover" 
+                        />
+                      </div>
+                      <div className="flex-1 flex flex-col justify-between">
+                        <div>
+                          <span className="px-2 py-0.5 bg-slate-50 text-slate-400 rounded-lg text-[9px] font-black uppercase tracking-widest">{item.category}</span>
+                          <h4 className="text-sm font-extrabold text-slate-900 mt-1 line-clamp-1">{item.title}</h4>
+                          <p className="text-sm font-black text-slate-900 mt-1">£{item.price}</p>
+                        </div>
+                        <div className="flex justify-between items-center mt-3">
+                          <span className="text-[10px] text-slate-400 font-bold flex items-center">
+                            <MapPin size={10} className="mr-0.5 text-slate-300" />
+                            {item.location?.address || 'London'}
+                          </span>
+                          <button
+                            onClick={() => removeFromCart(item.id)}
+                            className="p-1.5 px-3 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-[9px] font-black uppercase tracking-wider border-none transition-all cursor-pointer"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Right Column: Dynamic Checkout Pane */}
+                <div className="space-y-6">
+                  {/* Shipping Method Selector */}
+                  <div className="p-6 bg-slate-50 rounded-[36px] border border-slate-100 space-y-4">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Choose Shipping Mode</p>
+                    
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        onClick={() => { setShippingMethod('individual'); haptics.light(); }}
+                        className={`p-4 h-24 rounded-[24px] border text-left transition-all cursor-pointer bg-white ${
+                          shippingMethod === 'individual'
+                            ? 'ring-2 ring-slate-900 border-slate-900'
+                            : 'border-slate-200 opacity-60 hover:opacity-100'
+                        }`}
+                      >
+                        <p className="font-extrabold text-xs text-slate-900">Standard Solo</p>
+                        <p className="text-[10px] text-slate-500 font-bold mt-1">Home Delivery</p>
+                        <p className="text-sm font-black text-slate-950 mt-1 font-mono">£4.99</p>
+                      </button>
+
+                      <button
+                        onClick={() => { setShippingMethod('group'); haptics.light(); }}
+                        className={`p-4 h-24 rounded-[24px] border text-left transition-all cursor-pointer bg-white relative overflow-hidden ${
+                          shippingMethod === 'group'
+                            ? 'ring-2 ring-brand border-brand'
+                            : 'border-slate-200 opacity-60 hover:opacity-100'
+                        }`}
+                      >
+                        <span className="absolute top-2 right-2 px-1.5 py-0.5 bg-emerald-500 text-white rounded text-[8px] font-black uppercase tracking-widest animate-bounce">
+                          Eco Save
+                        </span>
+                        <p className="font-extrabold text-xs text-emerald-600">Green Group</p>
+                        <p className="text-[10px] text-slate-500 font-bold mt-1">Shared Shipping</p>
+                        <p className="text-sm font-black text-slate-950 mt-1 font-mono">£1.50 or FREE</p>
+                      </button>
+                    </div>
+
+                    {shippingMethod === 'group' && (
+                      <div className="bg-white border border-slate-200/60 p-5 rounded-[28px] space-y-4">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Neighborhood Consolidation Hub</p>
+                        
+                        <div className="space-y-2">
+                          <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500">Active Hubs nearby:</label>
+                          <select
+                            value={selectedHub}
+                            onChange={(e) => { setSelectedHub(e.target.value); haptics.light(); }}
+                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:outline-none"
+                          >
+                            <option value="hoxton">🏫 Hoxton square Hub (Host: Marcus K. - 4 Neighbors joined)</option>
+                            <option value="spitalfields">🌳 Spitalfields Central (Host: Sarah M. - 2 Neighbors joined)</option>
+                            <option value="boundary">🚪 Boundary Street Hub (Host: Clara S. - 1 Neighbor joined)</option>
+                            <option value="new">➕ Assemble New Neighborhood Group Order</option>
+                          </select>
+                        </div>
+
+                        {selectedHub === 'new' && (
+                          <div className="p-3 bg-slate-50 rounded-xl space-y-2 border border-dashed border-slate-300">
+                            <input
+                              type="text"
+                              placeholder="e.g. Shoreditch Park Group"
+                              required
+                              value={newHubName}
+                              onChange={(e) => setNewHubName(e.target.value)}
+                              className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs font-bold"
+                            />
+                            <input
+                              type="text"
+                              placeholder="Invite Code (e.g. N1-SHORE)"
+                              required
+                              value={newHubCode}
+                              onChange={(e) => setNewHubCode(e.target.value)}
+                              className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs font-bold uppercase"
+                            />
+                          </div>
+                        )}
+
+                        <div className="pt-2 border-t border-slate-100 space-y-2">
+                          <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-wider text-slate-400">
+                            <span>Joined Neighbors Simulation:</span>
+                            <span className="text-brand font-black">{addedNeighborsCount} neighbors</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0"
+                            max="4"
+                            value={addedNeighborsCount}
+                            onChange={(e) => { setAddedNeighborsCount(Number(e.target.value)); haptics.light(); }}
+                            className="w-full accent-brand cursor-pointer h-2 bg-slate-100 rounded-lg outline-none"
+                          />
+                          
+                          <div className="p-3.5 bg-emerald-50 text-emerald-800 rounded-2xl flex items-start gap-2 border border-emerald-100">
+                            <div className="text-sm">🌿</div>
+                            <div>
+                              <p className="text-[10px] font-extrabold uppercase tracking-wide">
+                                {addedNeighborsCount >= 3 ? 'FREE Group Shipping Unlocked!' : `${3 - addedNeighborsCount} more neighbors for FREE delivery!`}
+                              </p>
+                              <p className="text-[9.5px] font-bold text-emerald-600/90 leading-tight">
+                                Consolidated shipping prevents extra carbon footprint by packing neighbor packages in 1 delivery run!
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Order Breakdown Card */}
+                  <div className="p-6 bg-slate-900 text-white rounded-[36px] space-y-4 shadow-xl">
+                    <p className="text-[10px] font-black uppercase tracking-widest opacity-60">Order Total & Savings</p>
+                    
+                    <div className="space-y-2.5 text-xs font-bold font-mono">
+                      <div className="flex justify-between">
+                        <span className="opacity-70 font-sans">Items Subtotal</span>
+                        <span>£{cart.reduce((sum, item) => sum + item.price, 0).toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="opacity-70 font-sans">Standard Delivery Cost</span>
+                        <span>£4.99</span>
+                      </div>
+                      {shippingMethod === 'group' && (
+                        <div className="flex justify-between text-emerald-400">
+                          <span className="font-sans">Group Shipping Discount</span>
+                          <span>-£{(4.99 - (addedNeighborsCount >= 3 ? 0 : addedNeighborsCount === 2 ? 1.50 : addedNeighborsCount === 1 ? 2.50 : 3.50)).toFixed(2)}</span>
+                        </div>
+                      )}
+                      <div className="pt-3 border-t border-white/10 flex justify-between items-center">
+                        <span className="text-sm uppercase tracking-wider opacity-60 font-black font-sans">Grand Total</span>
+                        <span className="text-2xl font-black">
+                          £{(
+                            cart.reduce((sum, item) => sum + item.price, 0) + 
+                            (shippingMethod === 'individual' 
+                              ? 4.99 
+                              : (addedNeighborsCount >= 3 ? 0 : addedNeighborsCount === 2 ? 1.50 : addedNeighborsCount === 1 ? 2.50 : 3.50))
+                          ).toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        haptics.heavy();
+                        const subtotal = cart.reduce((sum, item) => sum + item.price, 0);
+                        const shippingCostVal = shippingMethod === 'individual' 
+                          ? 4.99 
+                          : (addedNeighborsCount >= 3 ? 0 : addedNeighborsCount === 2 ? 1.50 : addedNeighborsCount === 1 ? 2.50 : 3.50);
+                        setLastOrderDetails({
+                          itemsCount: cart.length,
+                          total: subtotal + shippingCostVal,
+                          method: shippingMethod,
+                          savedCo2: shippingMethod === 'group' ? 2.8 : 0,
+                          earnedPoints: shippingMethod === 'group' ? 35 : 10
+                        });
+                        setCheckoutSuccess(true);
+                        setCart([]); // Clear cart
+                      }}
+                      className="w-full py-5 bg-brand text-white text-[11px] font-black uppercase tracking-widest rounded-[24px] shadow-lg shadow-brand/20 active:scale-95 transition-all border-none cursor-pointer"
+                    >
+                      Place {shippingMethod === 'group' ? 'Combined Group Order' : 'Standard Solo Order'}
+                    </button>
+                  </div>
+                </div>
               </div>
             )
           ) : (
-            (tab === 'cart' ? cart : filteredItems).map((item, i) => (
-              <MarketplaceItemCard 
-                key={item.id}
-                item={item}
-                index={i}
-                tab={tab as any}
-                isSaved={profile?.savedItems?.includes(item.id)}
-                onSave={() => toggleSave(item.id)}
-                onAddToCart={() => addToCart(item)}
-                onMakeOffer={() => setOfferModalItem(item)}
-                onUpdateStatus={(st: any) => updateStatus(item.id, st)}
-                onAddPhoto={() => handleUpdateImages(item.id)}
-                isUploading={uploadingItem === item.id}
-                renderRating={renderRating}
-              />
-            ))
+            <div className="grid grid-cols-2 gap-4">
+              {filteredItems.length === 0 ? (
+                <div className="col-span-2 text-center py-20 px-6 bg-slate-50 rounded-[40px] border-2 border-dashed border-slate-100 flex flex-col items-center justify-center">
+                  <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-sm mb-4">
+                     {tab === 'saved' ? <Heart size={32} className="text-rose-200" /> : <ShoppingBag size={32} className="text-slate-200" />}
+                  </div>
+                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest text-center px-4 leading-relaxed">
+                    {tab === 'saved' 
+                      ? "Your wishlist is empty. Tap the heart to keep tabs on items you love!" 
+                      : "No matches found. Try adjusting your filters or search terms."
+                    }
+                  </p>
+                  {tab === 'browse' && (searchTerm || showFilters) && (
+                    <button 
+                      onClick={() => { setSearchTerm(''); setLocationSearch(''); setSellerSearch(''); setActiveFilter('all'); setShowFilters(false); }}
+                      className="mt-6 text-[10px] font-black text-brand uppercase tracking-widest border-b border-brand"
+                    >
+                      Clear All Filters
+                    </button>
+                  )}
+                </div>
+              ) : (
+                filteredItems.map((item, i) => (
+                  <MarketplaceItemCard 
+                    key={item.id}
+                    item={item}
+                    index={i}
+                    tab={tab as any}
+                    isSaved={profile?.savedItems?.includes(item.id)}
+                    onSave={() => toggleSave(item.id)}
+                    onAddToCart={() => addToCart(item)}
+                    onMakeOffer={() => setOfferModalItem(item)}
+                    onUpdateStatus={(st: any) => updateStatus(item.id, st)}
+                    onAddPhoto={() => handleUpdateImages(item.id)}
+                    onShare={() => handleShare(item)}
+                    isUploading={uploadingItem === item.id}
+                    renderRating={renderRating}
+                    distance={distanceMap[item.id]}
+                    isSelected={selectedItemIds.includes(item.id)}
+                    onToggleSelect={toggleSelectItem}
+                  />
+                ))
+              )}
+            </div>
           )}
         </div>
       )}
@@ -488,6 +1278,141 @@ export function MarketplaceView() {
         onClose={() => setOfferModalItem(null)}
         onSubmit={handleMakeOffer}
       />
+
+      <CreateListingModal 
+        show={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        title={newTitle}
+        setTitle={setNewTitle}
+        desc={newDesc}
+        setDesc={setNewDesc}
+        price={newPrice}
+        setPrice={setNewPrice}
+        category={newCategory}
+        setCategory={setNewCategory}
+        condition={newCondition}
+        setCondition={setNewCondition}
+        images={newImages}
+        setImages={setNewImages}
+        onGenerateImage={generateAIImage}
+        isGenerating={isGeneratingImage}
+        onSubmit={handleCreateListing}
+        isSubmitting={isSubmitting}
+        tags={newTags}
+        setTags={setNewTags}
+        summary={newSummary}
+        setSummary={setNewSummary}
+        onGenerateTagsSummary={generateTagsAndSummary}
+        isGeneratingTagsSummary={isGeneratingTagsSummary}
+      />
+
+      {/* RATINGS & REVIEWS DIALOG */}
+      <AnimatePresence>
+        {reviewingItem && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-md pointer-events-auto"
+              onClick={() => setReviewingItem(null)}
+            />
+            
+            <motion.div 
+              initial={{ scale: 0.9, y: 30 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 30 }}
+              className="bg-white dark:bg-slate-900 rounded-[36px] w-full max-w-lg p-6 max-h-[85vh] overflow-y-auto no-scrollbar shadow-2xl relative text-left z-10 border border-slate-150/65 dark:border-slate-800"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex justify-between items-start mb-2">
+                 <div>
+                    <span className="text-[9px] font-black uppercase tracking-[0.15em] text-[#4f46e5] bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-lg">Product Feedback Platform</span>
+                    <h3 className="text-base font-black text-slate-900 dark:text-white mt-2 tracking-tight">{reviewingItem.title}</h3>
+                 </div>
+                 <button 
+                   onClick={() => setReviewingItem(null)}
+                   className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-650 dark:hover:white rounded-full cursor-pointer border-none bg-transparent"
+                 >
+                   ✕
+                 </button>
+              </div>
+
+              <Testimonials 
+                 productId={reviewingItem.id} 
+                 productName={reviewingItem.title}
+                 providerId={reviewingItem.sellerId}
+                 providerName={`Seller UID: ${reviewingItem.sellerId.substring(0, 6)}`}
+              />
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* BULK DELETE CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {showBulkDeleteConfirm && (
+          <div className="fixed inset-0 z-[500] flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowBulkDeleteConfirm(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm pointer-events-auto"
+            />
+            {/* Modal Box */}
+            <motion.div 
+              initial={{ scale: 0.9, y: 20, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.9, y: 20, opacity: 0 }}
+              className="relative bg-white w-full max-w-md rounded-[32px] p-6 shadow-2xl pointer-events-auto border border-slate-100 overflow-hidden"
+            >
+              <div className="flex items-center space-x-3 mb-4">
+                <div className="w-10 h-10 bg-rose-550/10 text-rose-600 rounded-2xl flex items-center justify-center">
+                  <Trash size={20} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">Confirm Bulk Deletion</h3>
+                  <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">Accidental Data Loss Guard</p>
+                </div>
+              </div>
+
+              <div className="space-y-3 mb-6 bg-slate-50 p-4 rounded-2xl border border-slate-100 max-h-[160px] overflow-y-auto no-scrollbar">
+                <p className="text-[11px] text-slate-600 font-semibold leading-relaxed">
+                  Are you sure you want to delete the following <span className="font-extrabold text-rose-600">{selectedItemIds.length}</span> item(s)? This action cannot be undone.
+                </p>
+                <div className="space-y-1.5 pt-2 border-t border-slate-200/60">
+                  {items.filter(item => selectedItemIds.includes(item.id)).map(item => (
+                    <div key={item.id} className="flex items-center space-x-2 text-[10px] text-slate-700 font-bold">
+                      <span className="w-1.5 h-1.5 bg-rose-500 rounded-full flex-shrink-0" />
+                      <span className="truncate">{item.title}</span>
+                      <span className="text-slate-400 flex-shrink-0">({item.price === 0 ? 'Free' : `£${item.price}`})</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowBulkDeleteConfirm(false)}
+                  className="py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-[10px] uppercase tracking-wider rounded-xl transition-all active:scale-95 border-none outline-none"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkDelete}
+                  className="py-3 px-4 bg-rose-600 hover:bg-rose-700 text-white font-black text-[10px] uppercase tracking-wider rounded-xl transition-all active:scale-95 shadow-lg shadow-rose-200/50 border-none outline-none"
+                >
+                  Confirm Delete
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       <div className="mt-12 p-8 bg-brand/5 rounded-[50px] border border-brand/10 flex items-center space-x-6 relative overflow-hidden group">
         <div className="absolute -right-6 -bottom-6 w-32 h-32 bg-brand/5 rounded-full blur-3xl group-hover:scale-150 transition-transform duration-700"></div>
@@ -504,207 +1429,312 @@ export function MarketplaceView() {
           </button>
         </div>
       </div>
+
+      {/* Checkout Success Modal overlay */}
+      <AnimatePresence>
+        {checkoutSuccess && lastOrderDetails && (
+          <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={() => setCheckoutSuccess(false)} />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative bg-white max-w-sm w-full rounded-[40px] p-8 text-center space-y-6 shadow-2xl overflow-hidden"
+            >
+              <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600 mx-auto text-3xl">
+                🌟
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-2xl font-black text-slate-900">Order Confirmed!</h3>
+                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Successfully Assembled</p>
+              </div>
+
+              <div className="p-5 bg-slate-50 rounded-2xl text-left text-xs font-bold space-y-2">
+                <div className="flex justify-between flex-row">
+                  <span className="opacity-60">Order Type:</span>
+                  <span className="capitalize">{lastOrderDetails.method === 'group' ? '💚 Shared Group Order' : 'Individual Solo'}</span>
+                </div>
+                <div className="flex justify-between flex-row">
+                  <span className="opacity-60">Total Bill Paid:</span>
+                  <span>£{lastOrderDetails.total.toFixed(2)}</span>
+                </div>
+                {lastOrderDetails.method === 'group' && (
+                  <div className="flex justify-between flex-row text-emerald-600">
+                    <span className="opacity-60">CO2 Emissions Offset:</span>
+                    <span>≈ {lastOrderDetails.savedCo2} kg Saved!</span>
+                  </div>
+                )}
+                <div className="flex justify-between flex-row text-indigo-600 pt-2 border-t border-slate-200">
+                  <span>Community Points Added:</span>
+                  <span>+{lastOrderDetails.earnedPoints} pts</span>
+                </div>
+              </div>
+
+              <p className="text-[10.5px] text-slate-400 leading-relaxed font-bold">
+                {lastOrderDetails.method === 'group' 
+                  ? "Your neighborhood hub neighbors have been updated, and combined shipping has been coordinated. Save the local planet together!" 
+                  : "Your solo package has been queued for immediate standard shipping."
+                }
+              </p>
+
+              <button
+                onClick={() => { setCheckoutSuccess(false); setTab('browse'); }}
+                className="w-full py-4.5 bg-slate-900 hover:bg-black text-white text-[10.5px] font-black uppercase tracking-widest rounded-3xl"
+              >
+                Back to Browse Items
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
-function MarketplaceItemCard({ item, index, tab, isSaved, onSave, onAddToCart, onMakeOffer, onUpdateStatus, onAddPhoto, isUploading, renderRating }: any) {
-  const [currentImg, setCurrentImg] = useState(0);
-  const images = item.images && item.images.length > 0 ? item.images : [null];
 
-  const nextImg = (e: any) => {
-    e.stopPropagation();
-    setCurrentImg((prev) => (prev + 1) % images.length);
-  };
-  
-  const prevImg = (e: any) => {
-    e.stopPropagation();
-    setCurrentImg((prev) => (prev - 1 + images.length) % images.length);
+
+function CreateListingModal({ 
+  show, onClose, title, setTitle, desc, setDesc, price, setPrice, 
+  category, setCategory, condition, setCondition, images, onGenerateImage, isGenerating, onSubmit, isSubmitting, setImages,
+  tags, setTags, summary, setSummary, onGenerateTagsSummary, isGeneratingTagsSummary
+}: any) {
+  if (!show) return null;
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImages((prev: string[]) => [...prev, reader.result as string]);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.05 }}
-      className="bg-white rounded-[40px] overflow-hidden border border-slate-100 shadow-sm flex flex-col group relative"
-    >
-      <div className="h-48 bg-slate-50 relative overflow-hidden">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={currentImg}
-            initial={{ opacity: 0, scale: 1.1 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 0.4 }}
-            className="w-full h-full"
-          >
-            {images[currentImg] ? (
-              <img src={images[currentImg]} className="w-full h-full object-cover" alt={item.title} />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-slate-200">
-                <ShoppingBag size={48} />
-              </div>
-            )}
-          </motion.div>
-        </AnimatePresence>
-
-        {images.length > 1 && (
-          <>
-            <button 
-              onClick={prevImg}
-              className="absolute left-3 top-1/2 -translate-y-1/2 p-2 bg-white/80 backdrop-blur-md rounded-full text-slate-800 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
-            >
-              <ChevronLeft size={16} />
-            </button>
-            <button 
-              onClick={nextImg}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-white/80 backdrop-blur-md rounded-full text-slate-800 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
-            >
-              <ChevronRight size={16} />
-            </button>
-            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex space-x-1.5">
-              {images.map((_: any, idx: number) => (
-                <div key={idx} className={`w-1.5 h-1.5 rounded-full transition-all ${idx === currentImg ? 'bg-white w-4' : 'bg-white/40'}`} />
-              ))}
-            </div>
-          </>
-        )}
-
-        <div className="absolute top-4 left-4">
-          <span className={`px-3 py-1.5 rounded-2xl text-[10px] font-black uppercase tracking-tighter shadow-lg ${
-            item.isFree ? 'bg-emerald-500 text-white' : 'bg-white text-slate-900 border border-slate-100'
-          }`}>
-            {item.isFree ? 'Free' : `£${item.price}`}
-          </span>
+    <div className="fixed inset-0 z-[400] flex items-end justify-center pointer-events-none">
+      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md pointer-events-auto" onClick={onClose} />
+      <motion.div 
+        initial={{ y: '100%' }}
+        animate={{ y: 0 }}
+        exit={{ y: '100%' }}
+        className="relative bg-white w-full max-w-md rounded-t-[50px] p-8 pb-12 shadow-2xl pointer-events-auto h-[90vh] overflow-y-auto no-scrollbar"
+      >
+        <div className="w-12 h-1.5 bg-slate-100 rounded-full mx-auto mb-8" />
+        <div className="flex justify-between items-center mb-8">
+           <h3 className="text-2xl font-black text-slate-900">Post New Item</h3>
+           <button onClick={onClose} className="p-3 bg-slate-50 rounded-2xl">
+             <X size={20} />
+           </button>
         </div>
 
-        {tab !== 'my-listings' && (
-          <button 
-            onClick={(e) => { e.stopPropagation(); onSave(); }}
-            className={`absolute top-4 right-4 p-2.5 rounded-2xl backdrop-blur-md transition-all active:scale-90 ${isSaved ? 'bg-rose-500 text-white shadow-lg shadow-rose-200' : 'bg-white/80 text-slate-400'}`}
-          >
-            <Heart size={16} fill={isSaved ? 'white' : 'none'} />
-          </button>
-        )}
-      </div>
+        <div className="space-y-6">
+           <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">What are you selling?</label>
+              <input 
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="e.g. Vintage Road Bike"
+                className="w-full p-5 bg-slate-50 rounded-3xl outline-none focus:ring-2 focus:ring-brand font-bold"
+              />
+           </div>
 
-      <div className="p-6 flex-1 flex flex-col">
-        <div className="flex justify-between items-start mb-2">
-          <p className="text-[9px] text-brand font-black uppercase tracking-widest">
-            {item.category} • {item.condition?.replace('_', ' ') || 'Good'}
-          </p>
-          {item.status !== 'available' && (
-            <span className="text-[8px] font-bold uppercase px-2 py-0.5 bg-amber-50 text-amber-600 rounded-lg">{item.status.replace('_', ' ')}</span>
-          )}
-        </div>
-        <h4 className="font-bold text-sm mb-1 line-clamp-1 text-slate-900 tracking-tight">{item.title}</h4>
-        
-        {renderRating(item.sellerId)}
-
-        <div className="flex items-center space-x-1.5 text-slate-400 mt-3 mb-6">
-          <MapPin size={12} />
-          <span className="text-[10px] font-bold truncate">
-            {item.location?.address.split(',')[0] || 'Local'}
-          </span>
-        </div>
-        
-        <div className="mt-auto space-y-2">
-          {tab === 'browse' || tab === 'saved' || tab === 'cart' ? (
-            <div className="flex flex-col space-y-2">
-              <button 
-                onClick={onAddToCart}
-                className="w-full py-3 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all active:scale-95 shadow-lg shadow-slate-200"
+           <div className="flex justify-between items-center px-1">
+             <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Photos & AI Art</label>
+             <button 
+                onClick={onGenerateImage}
+                disabled={!title || isGenerating}
+                className="px-4 py-2 bg-brand/10 text-brand rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center space-x-2 disabled:opacity-30 border border-brand/20 active:scale-95 transition-all"
               >
-                Add to Bag
-              </button>
-              {!item.isFree && (
-                <button 
-                  onClick={onMakeOffer}
-                  className="w-full py-3 bg-brand/10 text-brand rounded-2xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all"
-                >
-                   Make Offer
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="flex flex-col space-y-2">
-              <div className="grid grid-cols-2 gap-2">
-                <button 
-                  onClick={() => onUpdateStatus('sold')}
-                  className="py-2.5 bg-emerald-50 text-emerald-600 rounded-xl text-[9px] font-black uppercase tracking-widest"
-                >
-                  Sold
-                </button>
-                <select 
-                  className="bg-slate-50 rounded-xl text-[9px] font-black uppercase tracking-widest px-2 outline-none border-none appearance-none"
-                  value={item.status}
-                  onChange={(e) => onUpdateStatus(e.target.value as any)}
-                >
-                  <option value="available">Live</option>
-                  <option value="pending_pickup">Pickup</option>
-                  <option value="delivered">Done</option>
-                  <option value="deleted">Hide</option>
-                </select>
-              </div>
-              <button 
-                onClick={onAddPhoto}
-                disabled={isUploading}
-                className="w-full py-2.5 bg-slate-900 text-white rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center justify-center space-x-2 active:scale-95 disabled:opacity-50"
-              >
-                {isUploading ? (
-                  <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                {isGenerating ? (
+                  <div className="w-3 h-3 border-2 border-brand/30 border-t-brand rounded-full animate-spin"></div>
                 ) : (
                   <>
-                    <ImageIcon size={14} />
-                    <span>Post Photo</span>
+                    <ImageIcon size={14} strokeWidth={2.5} />
+                    <span>AI Generate Image</span>
                   </>
                 )}
               </button>
-            </div>
-          )}
+           </div>
+           
+           <div className="grid grid-cols-3 gap-3">
+              {images.map((img: string, i: number) => (
+                <div key={i} className="aspect-square bg-slate-100 rounded-3xl overflow-hidden relative group border border-slate-100 shadow-sm">
+                   <img src={img} className="w-full h-full object-cover" />
+                   <button 
+                     onClick={() => setImages(images.filter((_: any, idx: number) => idx !== i))}
+                     className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white"
+                   >
+                     <X size={20} />
+                   </button>
+                </div>
+              ))}
+              <label className="aspect-square border-2 border-dashed border-slate-200 rounded-3xl flex items-center justify-center text-slate-300 cursor-pointer hover:bg-slate-50 transition-all hover:border-brand/40 group">
+                 <Plus size={32} className="group-hover:scale-110 transition-transform" />
+                 <input type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
+              </label>
+           </div>
+
+           <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Tell us more</label>
+              <textarea 
+                value={desc}
+                onChange={(e) => setDesc(e.target.value)}
+                placeholder="Condition, history, why you're selling..."
+                className="w-full p-5 bg-slate-50 rounded-3xl outline-none focus:ring-2 focus:ring-brand font-bold min-h-[120px]"
+              />
+           </div>
+
+           {/* GEMINI AUTOMATED ASSETS INSIGHTS */}
+           <div className="p-5 bg-gradient-to-br from-indigo-50/60 to-purple-50/60 border border-indigo-100/50 rounded-[30px] space-y-4 shadow-sm">
+              <div className="flex justify-between items-center">
+                 <label className="text-[10px] font-black uppercase tracking-widest text-indigo-950 flex items-center space-x-1">
+                    <Sparkles size={13} className="text-indigo-600 animate-pulse mr-1" strokeWidth={2.5} />
+                    <span>Gemini AI Insights</span>
+                 </label>
+                 <button
+                    type="button"
+                    disabled={!title || !desc || isGeneratingTagsSummary}
+                    onClick={onGenerateTagsSummary}
+                    className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[9px] font-black uppercase tracking-wider rounded-xl disabled:opacity-35 active:scale-95 transition-all flex items-center space-x-1 border-none shadow-md shadow-indigo-200"
+                 >
+                    {isGeneratingTagsSummary ? (
+                       <div className="w-2.5 h-2.5 border-2 border-indigo-300 border-t-white rounded-full animate-spin"></div>
+                    ) : (
+                       <span>AI Generate Specs</span>
+                    )}
+                 </button>
+              </div>
+
+              {summary && (
+                 <div className="space-y-1 bg-white p-3.5 rounded-2xl border border-indigo-100/40">
+                    <span className="text-[8px] font-black uppercase tracking-wider text-slate-400 block mb-0.5">AI Product Highlights</span>
+                    <p className="text-xs font-bold text-slate-700 leading-relaxed italic">"{summary}"</p>
+                 </div>
+              )}
+
+              {tags && tags.length > 0 && (
+                 <div className="space-y-1.5">
+                    <span className="text-[8px] font-black uppercase tracking-wider text-slate-400 block">Descriptive search tags:</span>
+                    <div className="flex flex-wrap gap-1.5">
+                       {tags.map((tg: string) => (
+                          <span key={tg} className="px-2.5 py-1 bg-indigo-100/60 border border-indigo-150 text-indigo-700 font-extrabold text-[9px] uppercase rounded-lg tracking-wider">
+                             #{tg}
+                          </span>
+                       ))}
+                    </div>
+                 </div>
+              )}
+           </div>
+
+           <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Price (£)</label>
+                <input 
+                  type="number"
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                  placeholder="25.00"
+                  className="w-full p-5 bg-slate-50 rounded-3xl outline-none focus:ring-2 focus:ring-brand font-bold"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Category</label>
+                <select 
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="w-full p-5 bg-slate-50 rounded-3xl outline-none focus:ring-2 focus:ring-brand font-bold appearance-none capitalize"
+                >
+                  <option value="food">Food</option>
+                  <option value="clothing">Clothing</option>
+                  <option value="electronics">Electronics</option>
+                  <option value="furniture">Furniture</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+           </div>
+
+           <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Condition</label>
+              <select 
+                value={condition}
+                onChange={(e) => setCondition(e.target.value as any)}
+                className="w-full p-5 bg-slate-50 rounded-3xl outline-none focus:ring-2 focus:ring-brand font-bold appearance-none capitalize"
+              >
+                <option value="new">New</option>
+                <option value="used_good">Used - Good</option>
+                <option value="used_fair">Used - Fair</option>
+                <option value="parts">For Parts</option>
+              </select>
+           </div>
+
+           <button 
+            disabled={isSubmitting || !title || !price}
+            onClick={onSubmit}
+            className="w-full py-5 bg-slate-900 text-white rounded-[32px] font-black uppercase tracking-widest active:scale-95 disabled:opacity-50 mt-4 h-16 shadow-xl shadow-slate-200"
+           >
+             {isSubmitting ? 'Posting...' : 'List Item Live'}
+           </button>
         </div>
-      </div>
-    </motion.div>
+      </motion.div>
+    </div>
   );
 }
 
 function MakeOfferModal({ item, price, setPrice, onClose, onSubmit }: any) {
   if (!item) return null;
   return (
-    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[300] flex items-center justify-center p-6">
-      <motion.div 
-        initial={{ scale: 0.95, opacity: 0, y: 20 }}
-        animate={{ scale: 1, opacity: 1, y: 0 }}
-        exit={{ scale: 0.95, opacity: 0, y: 20 }}
-        className="bg-white rounded-[50px] p-8 max-w-sm w-full shadow-2xl border border-white"
+    <div className="fixed inset-0 z-[300] pointer-events-none">
+       <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm pointer-events-auto" onClick={onClose} />
+       <motion.div 
+        initial={{ y: '100%' }}
+        animate={{ y: 0 }}
+        exit={{ y: '100%' }}
+        transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+        className="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-white rounded-t-[50px] shadow-2xl p-8 pb-12 pointer-events-auto"
       >
+        <div className="w-12 h-1.5 bg-slate-100 rounded-full mx-auto mb-8" />
+        
         <div className="flex justify-between items-start mb-8">
-           <div>
-             <h3 className="text-2xl font-black text-slate-900 mb-1">Price Offer</h3>
-             <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">{item.title}</p>
+           <div className="flex-1">
+             <div className="flex items-center space-x-2 mb-1">
+                <Tag size={16} className="text-brand" />
+                <h3 className="text-2xl font-black text-slate-900">Make an Offer</h3>
+             </div>
+             <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest line-clamp-1">{item.title}</p>
            </div>
            <button onClick={onClose} className="p-3 bg-slate-50 rounded-2xl hover:bg-slate-100 transition-colors">
              <X size={20} />
            </button>
         </div>
 
-        <div className="space-y-6">
-           <div className="p-8 bg-slate-50 rounded-[40px] text-center border border-slate-100/50">
-              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Asking Price</p>
-              <p className="text-4xl font-black text-slate-900">£{item.price}</p>
+        <div className="space-y-8">
+           <div className="p-8 bg-slate-900 rounded-[40px] text-white overflow-hidden relative shadow-2xl shadow-slate-400">
+              <DollarSign className="absolute -right-4 -bottom-4 text-white/5 w-40 h-40" />
+              <div className="relative z-10">
+                <p className="text-[10px] font-black uppercase tracking-widest opacity-60 mb-2">Original Asking Price</p>
+                <p className="text-4xl font-black">£{item.price}</p>
+              </div>
            </div>
 
-           <div className="space-y-3">
-              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Suggest your price</label>
+           <div className="space-y-4">
+              <div className="flex justify-between items-center px-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Your Suggestion</label>
+                {price && Number(price) > 0 && (
+                  <span className={`text-[10px] font-black uppercase tracking-widest ${Number(price) < item.price ? 'text-amber-500' : 'text-emerald-500'}`}>
+                    {Math.round(((Number(price) - item.price) / item.price) * 100)}% {Number(price) < item.price ? 'Below' : 'Above'}
+                  </span>
+                )}
+              </div>
               <div className="relative">
-                 <DollarSign className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" size={24} />
+                 <DollarSign className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-300" size={28} />
                  <input 
                   type="number"
+                  autoFocus
                   value={price}
                   onChange={(e) => setPrice(e.target.value)}
-                  placeholder="25.00"
-                  className="w-full pl-14 pr-6 py-5 bg-slate-50 rounded-3xl outline-none focus:ring-4 focus:ring-brand/10 font-black text-2xl transition-all"
+                  placeholder="Enter custom amount"
+                  className="w-full pl-16 pr-8 py-6 bg-slate-50 rounded-[32px] outline-none focus:ring-4 focus:ring-brand/10 font-black text-3xl transition-all text-slate-900 placeholder:text-slate-200"
                  />
               </div>
            </div>
@@ -712,10 +1742,15 @@ function MakeOfferModal({ item, price, setPrice, onClose, onSubmit }: any) {
            <button 
             onClick={onSubmit}
             disabled={!price || Number(price) <= 0}
-            className="w-full py-5 bg-slate-900 text-white rounded-3xl font-black uppercase tracking-[0.2em] shadow-2xl shadow-slate-400 active:scale-95 transition-all disabled:opacity-50 text-[11px]"
+            className="w-full py-6 bg-brand text-white rounded-[32px] font-black uppercase tracking-[0.2em] shadow-xl shadow-brand/20 active:scale-95 transition-all disabled:opacity-50 text-[12px] flex items-center justify-center space-x-3"
            >
-             Send Suggestion
+             <Navigation size={18} className="rotate-90" />
+             <span>Submit Offer to Seller</span>
            </button>
+           
+           <p className="text-center text-[10px] text-slate-400 font-bold uppercase tracking-widest italic opacity-60">
+             Offers are not binding but start a conversation
+           </p>
         </div>
       </motion.div>
     </div>

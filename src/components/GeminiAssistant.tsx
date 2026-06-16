@@ -5,17 +5,50 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Bot, Send, X, User } from 'lucide-react';
+import { Bot, Send, X, User, Sparkles } from 'lucide-react';
 import { askAI } from '../services/geminiService';
+import { haptics } from '../utils/haptics';
 
 export function GeminiAssistant() {
   const [isOpen, setIsOpen] = useState(false);
+  const [showScheduler, setShowScheduler] = useState(false);
   const [messages, setMessages] = useState<{ role: 'ai' | 'user'; text: string }[]>([
     { role: 'ai', text: 'Hi! I am KonnectS AI. How can I help you today? I can help with booking services, finding items, or explaining how the rewards work!' }
   ]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const parseConversationSlots = () => {
+    // Collect all chat text together
+    const chatText = messages.map(m => m.text.toLowerCase()).join(' ');
+    
+    // Default smart suggestion slots
+    const suggestions = [
+      { day: 'Tomorrow Afternoon', time: '14:00', reason: 'Matches typical off-peak low fare rate slots' },
+      { day: 'This Coming Saturday', time: '10:30', reason: 'Weekend premium coverage with active workers' },
+      { day: 'Next Monday morning', time: '09:00', reason: 'Central London rush-hour worker proximity high' }
+    ];
+
+    if (chatText.includes('morning') || chatText.includes('am')) {
+      suggestions[0] = { day: 'Tomorrow Morning', time: '09:30', reason: 'Matches your morning conversational preference' };
+    }
+    if (chatText.includes('weekend') || chatText.includes('saturday') || chatText.includes('sunday')) {
+      suggestions[0] = { day: 'Saturday Morning', time: '10:00', reason: 'Matches your weekend preference' };
+    }
+    if (chatText.includes('urgent') || chatText.includes('now') || chatText.includes('emergency')) {
+      suggestions[0] = { day: 'Immediate Dispatch', time: 'Within 45 mins', reason: 'Triggered by high-urgency keywords' };
+    }
+    
+    return suggestions;
+  };
+
+  useEffect(() => {
+    (window as any).__openAssistantWithMessage = (text: string) => {
+      setIsOpen(true);
+      setMessages(prev => [...prev, { role: 'ai', text }]);
+    };
+  }, []);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -74,6 +107,62 @@ export function GeminiAssistant() {
                 <X size={20} />
               </button>
             </div>
+
+            {/* Sub-Header Actions */}
+            <div className="px-4 py-2 bg-slate-800 border-b border-slate-700 flex justify-between items-center text-white">
+              <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">AI TOOLS</span>
+              <button
+                type="button"
+                onClick={() => { haptics.light(); setShowScheduler(!showScheduler); }}
+                className="flex items-center space-x-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-[9.5px] font-black uppercase tracking-wider transition-all cursor-pointer border-none"
+              >
+                <Sparkles size={11} className="text-amber-300 animate-pulse mr-0.5" />
+                <span>Smart Schedule</span>
+              </button>
+            </div>
+
+            {/* Smart Schedule Integration */}
+            {showScheduler && (
+              <div className="p-4 bg-indigo-50 border-b border-indigo-150 text-slate-800 space-y-2">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center space-x-1">
+                    <Sparkles size={14} className="text-indigo-600 animate-pulse" />
+                    <span className="text-[10px] font-black uppercase tracking-wider text-indigo-950">AI Smart Scheduler</span>
+                  </div>
+                  <button onClick={() => setShowScheduler(false)} className="text-[9px] font-bold text-indigo-600 hover:underline uppercase border-none bg-transparent cursor-pointer">Close</button>
+                </div>
+                
+                <p className="text-[10.5px] font-semibold text-slate-500 leading-normal">
+                  {messages.length <= 1 
+                    ? "Chat with the assistant about booking details first so we can parse suggestions!" 
+                    : "Analyzed current conversation threads for upcoming services:"}
+                </p>
+
+                {messages.length > 1 && (
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                    {parseConversationSlots().map((slot, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => {
+                          haptics.success();
+                          const acceptMsg = `Great! I've accepted and applied the AI suggested slot: ${slot.day} at ${slot.time}. Ready to dispatch!`;
+                          setMessages(prev => [...prev, { role: 'ai', text: acceptMsg }]);
+                          setShowScheduler(false);
+                        }}
+                        className="w-full bg-white hover:bg-indigo-100 p-2.5 rounded-xl border border-indigo-200 flex flex-col text-left transition-all active:scale-98 border-none cursor-pointer"
+                      >
+                        <div className="flex justify-between items-center w-full">
+                          <span className="text-[11px] font-black text-indigo-900">{slot.day}</span>
+                          <span className="text-[10px] font-mono text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded font-black">{slot.time}</span>
+                        </div>
+                        <span className="text-[9px] text-slate-400 font-bold mt-1 italic">{slot.reason}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Messages */}
             <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar bg-slate-50/50">

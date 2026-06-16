@@ -44,9 +44,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               uid: user.uid,
               email: user.email || '',
               username: user.displayName || user.email?.split('@')[0] || 'User',
-              rewardsPoints: 0,
+              rewardsPoints: 120,
               referralCode: Math.random().toString(36).substring(7).toUpperCase(),
               isWorker: false,
+              carbonSavingsKg: 17.5,
+              earnedBadges: ['pioneer'],
               createdAt: serverTimestamp(),
             };
             await setDoc(docRef, newProfile);
@@ -55,13 +57,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         }
 
+        // Pre-populate with cached profile from localStorage immediately for offline speed / fallback
+        const cachedProfile = localStorage.getItem(`konnects_profile_cache_${user.uid}`);
+        if (cachedProfile) {
+          setProfile(JSON.parse(cachedProfile));
+        } else {
+          fetch('/api/offline/profile')
+            .then(res => res.json())
+            .then(data => {
+              if (data && data.uid === user.uid) {
+                setProfile(data);
+              }
+            }).catch(() => {});
+        }
+
         // Set up real-time listener for profile
         unsubscribeProfile = onSnapshot(docRef, (snap) => {
           if (snap.exists()) {
-            setProfile(snap.data() as UserProfile);
+            const profileData = snap.data() as UserProfile;
+            setProfile(profileData);
+            localStorage.setItem(`konnects_profile_cache_${user.uid}`, JSON.stringify(profileData));
+            
+            // Sync user profile data to Service Worker cache via API endpoint
+            fetch('/api/offline/profile', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(profileData)
+            }).catch(e => console.warn('Bypassed SW profile cache sync:', e));
           }
         }, (error) => {
-          handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
+          console.warn("Firestore snapshot failed (possibly offline). Using cached profile instead.", error);
+          const cachedProfileBackup = localStorage.getItem(`konnects_profile_cache_${user.uid}`);
+          if (cachedProfileBackup) {
+            setProfile(JSON.parse(cachedProfileBackup));
+          } else {
+            // Service Worker cache network-fallback recovery
+            fetch('/api/offline/profile')
+              .then(res => res.json())
+              .then(data => {
+                if (data && data.uid === user.uid) {
+                  setProfile(data);
+                }
+              }).catch(() => {});
+          }
         });
 
       } else {
@@ -99,9 +137,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             uid: user.uid,
             email: user.email || '',
             username: user.displayName || user.email?.split('@')[0] || 'User',
-            rewardsPoints: 0,
+            rewardsPoints: 120,
             referralCode: Math.random().toString(36).substring(7).toUpperCase(),
             isWorker: false,
+            carbonSavingsKg: 17.5,
+            earnedBadges: ['pioneer'],
             createdAt: serverTimestamp(),
           };
           await setDoc(docRef, newProfile);
@@ -115,9 +155,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const emailSignIn = async (email: string, pass: string) => {
+  const emailSignIn = async (identifier: string, pass: string) => {
     try {
-      await signInWithEmailAndPassword(auth, email, pass);
+      let resolvedEmail = identifier.trim();
+      
+      // If identifier doesn't look like an email (doesn't contain '@'), try to resolve by username or mobileNumber
+      if (!resolvedEmail.includes('@')) {
+        const qUsername = query(collection(db, 'users'), where('username', '==', resolvedEmail));
+        const snapUsername = await getDocs(qUsername);
+        
+        if (!snapUsername.empty) {
+          resolvedEmail = snapUsername.docs[0].data().email;
+        } else {
+          // If no username found, try mobileNumber
+          const qMobile = query(collection(db, 'users'), where('mobileNumber', '==', resolvedEmail));
+          const snapMobile = await getDocs(qMobile);
+          if (!snapMobile.empty) {
+            resolvedEmail = snapMobile.docs[0].data().email;
+          }
+        }
+      }
+      
+      await signInWithEmailAndPassword(auth, resolvedEmail, pass);
     } catch (error: any) {
       throw error;
     }
@@ -145,9 +204,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isWorker: false,
         createdAt: serverTimestamp(),
       };
-      await setDoc(docRef, newProfile);
+      try {
+        await setDoc(docRef, newProfile);
+      } catch (firestoreError) {
+        handleFirestoreError(firestoreError, OperationType.CREATE, `users/${user.uid}`);
+      }
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'users');
       throw error;
     }
   };

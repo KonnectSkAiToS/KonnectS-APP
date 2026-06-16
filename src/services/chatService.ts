@@ -34,6 +34,7 @@ export async function sendMessageSafely(senderId: string, recipientId: string, t
       roomId,
       senderId,
       recipientId,
+      participants: [senderId, recipientId],
       text: filteredText,
       timestamp: serverTimestamp()
     };

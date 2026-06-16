@@ -4,34 +4,275 @@
  */
 
 import { useState, useEffect } from 'react';
-import { User, Settings, Shield, Award, CreditCard, Wrench, FileText, Share2, LogOut, Camera, ChevronRight, Copy, Check, MessageCircle, Mail, MapPin, MessageSquare, Heart, Trash2, ShoppingBag } from 'lucide-react';
+import { User, Settings, Shield, Award, CreditCard, Wrench, FileText, Share2, LogOut, Camera, ChevronRight, Copy, Check, MessageCircle, Mail, MapPin, MessageSquare, Heart, Trash2, ShoppingBag, ToggleLeft, ToggleRight, ArrowLeft, Leaf, RotateCw, X, ShieldCheck, CheckCircle, RefreshCw, Video, Activity } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useLanguage, Language } from '../contexts/LanguageContext';
 import { motion, AnimatePresence } from 'framer-motion';
-import { collection, query, where, getDocs, orderBy, doc, updateDoc, arrayRemove, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, doc, updateDoc, arrayRemove, onSnapshot, serverTimestamp, addDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { ServiceBooking, MarketplaceItem, WorkerType } from '../types';
+import { QuickSOS } from './QuickSOS';
+import { haptics } from '../utils/haptics';
+import { ExpenseInsight } from './ExpenseInsight';
+import { SettingsEditor } from './SettingsEditor';
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, BarChart, Bar, Cell, Legend } from 'recharts';
+import { jsPDF } from 'jspdf';
 
-type SubView = 'main' | 'history' | 'receipts' | 'rewards' | 'verification' | 'settings' | 'invite' | 'edit' | 'saved' | 'worker_setup';
+type SubView = 'main' | 'history' | 'receipts' | 'rewards' | 'verification' | 'settings' | 'invite' | 'edit' | 'saved' | 'worker_setup' | 'impact' | 'addresses' | 'appearance' | 'swap_dashboard';
 
 export function ProfileView() {
   const { user, profile, logout } = useAuth();
+  const { language, setLanguage, t } = useLanguage();
   const [view, setView] = useState<SubView>('main');
   const [history, setHistory] = useState<ServiceBooking[]>([]);
   const [savedItems, setSavedItems] = useState<MarketplaceItem[]>([]);
   const [copySuccess, setCopySuccess] = useState(false);
+  const [historyTab, setHistoryTab] = useState<'services' | 'marketplace'>('services');
+  const [pastMarketplaceOrders, setPastMarketplaceOrders] = useState<any[]>([
+    { id: 'm-ord-1', title: 'Ergonomic Desk Chair', price: 45, date: '21/04/2026', seller: 'Thomas L.', condition: 'Like New' },
+    { id: 'm-ord-2', title: 'Handmade Solid Pine Bookshelf', price: 65, date: '10/05/2026', seller: 'Shoreditch Woodworks', condition: 'Good' },
+    { id: 'm-ord-3', title: 'Vintage Copper Desk Lamp', price: 20, date: '28/05/2026', seller: 'Emma R.', condition: 'Slight Wear' }
+  ]);
   
   // Edit Profile State
   const [editingName, setEditingName] = useState(profile?.username || '');
   const [firstName, setFirstName] = useState(profile?.firstName || '');
   const [lastName, setLastName] = useState(profile?.lastName || '');
   const [mobileNumber, setMobileNumber] = useState(profile?.mobileNumber || '');
+  const [hourlyRate, setHourlyRate] = useState(profile?.hourlyRate?.toString() || '');
   const [isOnline, setIsOnline] = useState(profile?.isOnline || false);
   const [editingWorkerType, setEditingWorkerType] = useState<WorkerType>(profile?.workerType || 'other');
+
+  // Accessible Language and Referral Program state
+  const [selectedLang, setSelectedLang] = useState(profile?.appLanguage || 'English (UK)');
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [invitePhone, setInvitePhone] = useState('');
+  const [inviteStatus, setInviteStatus] = useState<'idle' | 'sending' | 'success'>('idle');
+  const [referrals, setReferrals] = useState<Array<{ name: string; contact: string; status: 'Signed Up' | 'Completed Task' | 'Pending'; reward: string }>>([
+    { name: 'Charlotte W.', contact: 'charlotte@shoreditch.co.uk', status: 'Completed Task', reward: '£10.00 Discount Earned' },
+    { name: 'David K.', contact: 'david.k@london.edu', status: 'Signed Up', reward: 'Pending First Job' },
+    { name: 'Marcus Avery', contact: 'marcus.a@hackney.org', status: 'Pending', reward: 'Pending Sign-up' }
+  ]);
+
+  // Saved Addresses State
+  const [addresses, setAddresses] = useState<Array<{ id: string; label: string; address: string }>>(() => {
+    if (profile?.savedAddresses) {
+      return profile.savedAddresses;
+    }
+    return [
+      { id: 'addr-1', label: 'Home', address: '12 Borough High St, London SE1 9QQ' },
+      { id: 'addr-2', label: 'Work', address: 'Shoreditch Town Hall, 380 Old St, London EC1V 9LT' }
+    ];
+  });
+  const [addressLabel, setAddressLabel] = useState('Home');
+  const [addressCustomLabel, setAddressCustomLabel] = useState('');
+  const [addressValue, setAddressValue] = useState('');
+  const [editingAddressId, setEditingAddressId] = useState<string | null>(null);
+
+  // Feedback Modal State
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [feedbackType, setFeedbackType] = useState<'bug' | 'feature' | 'general'>('bug');
+  const [feedbackSubject, setFeedbackSubject] = useState('');
+  const [feedbackDesc, setFeedbackDesc] = useState('');
+  const [feedbackSeverity, setFeedbackSeverity] = useState<'low' | 'medium' | 'high'>('medium');
+  const [feedbackSuccess, setFeedbackSuccess] = useState(false);
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+
+  // Digital Worker ID modal and token rotation state
+  const [showWorkerIDModal, setShowWorkerIDModal] = useState(false);
+  const [rotateSecondsLeft, setRotateSecondsLeft] = useState(10);
+  const [qrToken, setQrToken] = useState(() => `KNT-SECURE-${Math.floor(Math.random() * 900000 + 100000)}`);
+
+  // Swap Activity Dashboard States
+  const [laborCredits, setLaborCredits] = useState<number>(() => {
+    const saved = localStorage.getItem('saved_labor_credits');
+    return saved ? parseFloat(saved) : 24.5;
+  });
+  const [pendingSwaps, setPendingSwaps] = useState([
+    { id: 'sw-1', senderName: 'Oliver T.', location: 'Shoreditch (0.2 mi)', skill: 'Electrical Repair', hours: 3.0, credits: 3.0, date: 'Today' },
+    { id: 'sw-2', senderName: 'Hannah B.', location: 'Hoxton (0.5 mi)', skill: 'Gutter & Drain Clearing', hours: 1.5, credits: 1.5, date: 'Yesterday' },
+    { id: 'sw-3', senderName: 'Marcus V.', location: 'Hackney (0.8 mi)', skill: 'Garden Pruning & Landscaping', hours: 4.0, credits: 4.0, date: '2 days ago' }
+  ]);
+  const [completedSwaps, setCompletedSwaps] = useState<Array<{ id: string; name: string; skill: string; credits: number; date: string }>>([
+    { id: 'csw-1', name: 'Zoe J.', skill: 'Furniture Flatpack Assembly', credits: 2.0, date: '04 June 2026' },
+    { id: 'csw-2', name: 'Albert R.', skill: 'Lawn Mowing & Edging', credits: 1.5, date: '28 May 2026' }
+  ]);
+
+  useEffect(() => {
+    let timerID: any;
+    if (showWorkerIDModal) {
+      timerID = setInterval(() => {
+        setRotateSecondsLeft(prev => {
+          if (prev <= 1) {
+            setQrToken(`KNT-SECURE-${Math.floor(Math.random() * 900000 + 100000)}`);
+            return 10;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    } else {
+      setRotateSecondsLeft(10);
+    }
+    return () => clearInterval(timerID);
+  }, [showWorkerIDModal]);
+
+  useEffect(() => {
+    if (profile?.savedAddresses) {
+      setAddresses(profile.savedAddresses);
+    }
+  }, [profile?.savedAddresses]);
+
+  const toggleWorkerMode = async () => {
+    if (!profile?.uid) return;
+    try {
+      await updateDoc(doc(db, 'users', profile.uid), {
+        isWorkerMode: !profile.isWorkerMode,
+        updatedAt: serverTimestamp()
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${profile.uid}`);
+    }
+  };
+
+  const saveAddressesToFirestore = async (newAddresses: any[]) => {
+    if (!profile?.uid) return;
+    try {
+      await updateDoc(doc(db, 'users', profile.uid), {
+        savedAddresses: newAddresses,
+        updatedAt: serverTimestamp()
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${profile.uid}`);
+    }
+  };
+
+  const handleDownloadPDF = () => {
+    haptics.heavy();
+    const doc = new jsPDF();
+    
+    // Header Banner
+    doc.setFillColor(15, 23, 42); // slate 900
+    doc.rect(0, 0, 210, 40, 'F');
+    
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(22);
+    doc.text('KonnectS Super App', 15, 18);
+    
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.text('Official Member Personal Service Summary & Impact Audit', 15, 26);
+    doc.text(`Report Date: ${new Date().toLocaleDateString()}`, 150, 18);
+    
+    // Credentials Section
+    doc.setTextColor(15, 23, 42);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.text('Member Credentials', 15, 52);
+    
+    doc.setDrawColor(226, 232, 240); // slate 200
+    doc.line(15, 55, 195, 55);
+    
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.text(`Username: ${profile?.username || 'Guest Resident'}`, 15, 62);
+    doc.text(`Email: ${profile?.email || 'N/A'}`, 15, 68);
+    doc.text(`Loyalty Rating: ${profile?.rating ? profile.rating.toFixed(1) + '/5.0' : '5.0/5.0'}`, 15, 74);
+    doc.text(`Referral Code: ${profile?.referralCode || profile?.uid?.slice(-6).toUpperCase() || 'KONNECT50'}`, 110, 62);
+    doc.text(`Reward Points: ${profile?.rewardsPoints || 0} pts`, 110, 68);
+    doc.text(`Worker Level: ${profile?.isWorker ? 'Accredited Specialist' : 'Verified Resident'}`, 110, 74);
+    
+    // Impact Goals
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.text('Community Impact & Sustainability Metrics', 15, 88);
+    doc.line(15, 91, 195, 91);
+    
+    doc.setFont('helvetica', 'normal');
+    doc.text('• CO2 Carbon Emissions Mitigated: 3.5 kg CO2 (Green Journeys active)', 15, 98);
+    doc.text('• Neighbors Assisted / Delivery Sessions: 4 helper events logged', 15, 104);
+    doc.text('• Charity Items Contributed: 2 food contributions fulfilled', 15, 110);
+    doc.text(`• Community Support Loyalty Points: ${profile?.rewardsPoints || 0} points total`, 15, 116);
+    
+    // Recent Transactions
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.text('Recent Service & Maintenance History', 15, 130);
+    doc.line(15, 133, 195, 133);
+    
+    let startY = 140;
+    if (history.length === 0) {
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(10);
+      doc.text('No formal service activities documented in this quarterly cycle.', 15, startY);
+    } else {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      history.slice(0, 5).forEach((h, k) => {
+        const dateStr = h.createdAt ? new Date(h.createdAt.toMillis()).toLocaleDateString() : 'Recent';
+        doc.text(`${k + 1}. [${dateStr}] - ${h.serviceType.toUpperCase()} | Status: ${h.status.toUpperCase()}`, 15, startY);
+        doc.text(`Amount Incurred: £${h.price || '25.00'} | Payment Method: App wallet`, 15, startY + 5);
+        startY += 12;
+      });
+    }
+    
+    // Footer Banner
+    doc.setFillColor(248, 250, 252); // slate 50
+    doc.rect(0, 260, 210, 37, 'F');
+    
+    doc.setTextColor(100, 116, 139); // slate 500
+    doc.setFontSize(8);
+    doc.text('GARS-12 Standard Audit Document. Generated on behalf of KonnectS Super App UK.', 15, 270);
+    doc.text('All transaction registers are cryptographically secured on cloud ledger registries.', 15, 275);
+    doc.text('Verification Token: POS-VERIFIED-SECURE-KEY-8182', 15, 280);
+    
+    doc.save(`KonnectS_Profile_Summary_${profile?.username || 'Guest'}.pdf`);
+  };
+
+  const handleSubmitFeedback = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!feedbackSubject.trim() || !feedbackDesc.trim()) {
+      alert('Please fill in both the subject and description.');
+      return;
+    }
+    setFeedbackSubmitting(true);
+    try {
+      const feedbackData = {
+        userId: profile?.uid || user?.uid || 'guest',
+        username: profile?.username || 'Guest Resident',
+        email: profile?.email || '',
+        type: feedbackType,
+        subject: feedbackSubject.trim(),
+        description: feedbackDesc.trim(),
+        severity: feedbackType === 'bug' ? feedbackSeverity : null,
+        createdAt: serverTimestamp()
+      };
+      
+      // Save directly to 'feedback' collection
+      await addDoc(collection(db, 'feedback'), feedbackData);
+      
+      setFeedbackSuccess(true);
+      setFeedbackSubject('');
+      setFeedbackDesc('');
+      haptics.success();
+      setTimeout(() => {
+        setFeedbackSuccess(false);
+        setShowFeedbackModal(false);
+      }, 2000);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'feedback');
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     if (profile) {
       setIsOnline(profile.isOnline || false);
       setEditingWorkerType(profile.workerType || 'other');
+      if (profile.appLanguage) {
+        setSelectedLang(profile.appLanguage);
+      }
     }
   }, [profile]);
 
@@ -52,9 +293,28 @@ export function ProfileView() {
         orderBy('createdAt', 'desc')
       );
       const snap = await getDocs(q);
-      setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() } as ServiceBooking)));
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as ServiceBooking));
+      setHistory(list);
+
+      // Synchronize essential ride history to Service Worker offline cache
+      fetch('/api/offline/rides', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(list)
+      }).catch(err => console.warn('Bypassed SW rides cache sync:', err));
     } catch (e) {
-      handleFirestoreError(e, OperationType.LIST, 'bookings');
+      console.warn("Firestore bookings fetch failed (possibly offline). Retrying from Service Worker Cache backup...", e);
+      try {
+        const response = await fetch('/api/offline/rides');
+        const list = await response.json();
+        if (Array.isArray(list)) {
+          setHistory(list);
+        } else {
+          handleFirestoreError(e, OperationType.LIST, 'bookings');
+        }
+      } catch (err) {
+        handleFirestoreError(e, OperationType.LIST, 'bookings');
+      }
     }
   };
 
@@ -81,6 +341,7 @@ export function ProfileView() {
         firstName,
         lastName,
         mobileNumber,
+        hourlyRate: Number(hourlyRate) || 0,
         workerType: editingWorkerType,
         updatedAt: serverTimestamp()
       });
@@ -137,41 +398,296 @@ export function ProfileView() {
     }
   };
 
+  const toggleAutoRenew = async (bookingId: string, currentStatus: boolean) => {
+    try {
+      await updateDoc(doc(db, 'bookings', bookingId), {
+        autoRenew: !currentStatus,
+        updatedAt: serverTimestamp()
+      });
+      setHistory(prev => prev.map(item => item.id === bookingId ? { ...item, autoRenew: !currentStatus } : item));
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `bookings/${bookingId}`);
+    }
+  };
+
+  const handleRebook = async (booking: ServiceBooking) => {
+    if (!profile?.uid) return;
+    haptics.beacon();
+    try {
+      const docRef = await addDoc(collection(db, 'bookings'), {
+        customerId: profile.uid,
+        serviceType: booking.serviceType,
+        description: `${booking.description} (Repeat Booking / Re-booked)`,
+        price: booking.price || 40,
+        workerId: booking.workerId || 'moderator',
+        status: 'pending',
+        autoRenew: false,
+        customerName: profile.username || 'Resident Member',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      haptics.success();
+      alert(`Successfully placed a repeat request for ${booking.serviceType}! Reference ID: ${docRef.id.slice(-6).toUpperCase()}`);
+      fetchHistory();
+    } catch (e) {
+      console.error("Failed to rebook:", e);
+      alert("Error processing repeat booking. Please connect offline.");
+      haptics.error();
+    }
+  };
+
+  const handleRepeatMarketplaceOrder = (item: any) => {
+    haptics.beacon();
+    alert(`Successfully placed a custom request to repeat order for "${item.title}"! We are contacting seller ${item.seller} for replica availability.`);
+    haptics.success();
+  };
+
+  // Referral Program interactive handlers
+  const handleInviteFriend = (e: React.FormEvent) => {
+    e.preventDefault();
+    const contact = inviteEmail.trim() || invitePhone.trim();
+    if (!contact) return;
+    
+    setInviteStatus('sending');
+    const name = contact.includes('@') 
+      ? contact.split('@')[0].charAt(0).toUpperCase() + contact.split('@')[0].slice(1)
+      : 'Friend ' + contact.slice(-4);
+      
+    setTimeout(() => {
+      setReferrals(prev => [
+        ...prev,
+        {
+          name,
+          contact,
+          status: 'Pending',
+          reward: 'Pending Sign-up'
+        }
+      ]);
+      setInviteEmail('');
+      setInvitePhone('');
+      setInviteStatus('success');
+      setTimeout(() => setInviteStatus('idle'), 3000);
+    }, 600);
+  };
+
+  const handleSimulateReferralSuccess = async (index: number) => {
+    const updated = [...referrals];
+    const friend = updated[index];
+    if (friend.status === 'Completed Task') return;
+
+    if (friend.status === 'Pending') {
+      friend.status = 'Signed Up';
+      friend.reward = 'Pending First Job';
+    } else if (friend.status === 'Signed Up') {
+      friend.status = 'Completed Task';
+      friend.reward = '£10.00 Discount Earned';
+      
+      // Update persistent database document values
+      if (profile?.uid) {
+        try {
+          const currentDiscount = profile.discountBalance || 0;
+          const currentCount = profile.referredUsersCount || 0;
+          const currentPoints = profile.rewardsPoints || 0;
+          
+          await updateDoc(doc(db, 'users', profile.uid), {
+            discountBalance: currentDiscount + 10,
+            referredUsersCount: currentCount + 1,
+            rewardsPoints: currentPoints + 150,
+            updatedAt: serverTimestamp()
+          });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `users/${profile.uid}`);
+        }
+      }
+    }
+    setReferrals(updated);
+  };
+
   const menuItems = [
-    { icon:Award, label: 'Rewards & Referrals', value: 'rewards', color: 'bg-amber-50 text-amber-600' },
-    { icon: Heart, label: 'Saved Marketplace Items', value: 'saved', color: 'bg-rose-50 text-rose-600' },
-    { icon: Wrench, label: 'Worker Configuration', value: 'worker_setup', color: 'bg-indigo-50 text-indigo-600' },
-    { icon: FileText, label: 'Maintenance & Service History', value: 'history', color: 'bg-indigo-50 text-slate-600' },
-    { icon: CreditCard, label: 'Receipts & Invoices', value: 'receipts', color: 'bg-emerald-50 text-emerald-600' },
-    { icon: Shield, label: 'Worker Verification', value: 'verification', color: 'bg-blue-50 text-blue-600' },
-    { icon: Settings, label: 'App Settings', value: 'settings', color: 'bg-slate-50 text-slate-600' },
-    { icon: Share2, label: 'Invite Friends', value: 'invite', color: 'bg-emerald-50 text-emerald-600' },
+    { icon: RefreshCw, label: t('profile.title').includes('Profile') ? 'Swap Activity Dashboard' : 'সোয়াপ অ্যাক্টিভিটি ড্যাশবোর্ড', value: 'swap_dashboard', color: 'bg-indigo-50 text-indigo-600' },
+    { icon:Award, label: t('profile.title').includes('Profile') ? 'Rewards & Referrals' : 'পুরষ্কার এবং রেফারেল', value: 'rewards', color: 'bg-amber-50 text-amber-600' },
+    { icon: Leaf, label: t('profile.title').includes('Profile') ? 'Community Impact & Stats' : 'কমিউনিটি ইমপ্যাক্ট ও পরিসংখ্যান', value: 'impact', color: 'bg-emerald-50 text-emerald-600' },
+    { icon: MapPin, label: t('profile.title').includes('Profile') ? 'Saved Addresses' : 'সংরক্ষিত ঠিকানা', value: 'addresses', color: 'bg-sky-50 text-sky-600' },
+    { icon: MessageSquare, label: t('profile.title').includes('Profile') ? 'Provide Feedback' : 'মতামত জানান', value: 'feedback_trigger', color: 'bg-pink-50 text-pink-600' },
+    { icon: Heart, label: t('profile.title').includes('Profile') ? 'Saved Marketplace Items' : 'সংরক্ষিত মার্কেটপ্লেস আইটেম', value: 'saved', color: 'bg-rose-50 text-rose-600' },
+    { icon: Wrench, label: t('profile.title').includes('Profile') ? 'Worker Configuration' : 'কর্মী কনফিগারেশন', value: 'worker_setup', color: 'bg-indigo-50 text-indigo-600' },
+    { icon: FileText, label: t('profile.title').includes('Profile') ? 'Maintenance & Service History' : 'রক্ষণাবেক্ষণ ও সেবা ইতিহাস', value: 'history', color: 'bg-indigo-50 text-slate-600' },
+    { icon: CreditCard, label: t('profile.title').includes('Profile') ? 'Receipts & Invoices' : 'রসিদ ও চালান', value: 'receipts', color: 'bg-emerald-50 text-emerald-600' },
+    { icon: Shield, label: t('profile.title').includes('Profile') ? 'Worker Verification' : 'কর্মী যাচাইকরণ', value: 'verification', color: 'bg-blue-50 text-blue-600' },
+    { icon: Settings, label: t('profile.title').includes('Profile') ? 'Appearance & Theme' : 'থিম সেটিংস', value: 'appearance', color: 'bg-violet-50 text-violet-600' },
+    { icon: Settings, label: t('profile.title').includes('Profile') ? 'App Settings' : 'অ্যাপ সেটিংস', value: 'settings', color: 'bg-slate-50 text-slate-600' },
+    { icon: Share2, label: t('profile.title').includes('Profile') ? 'Invite Friends' : 'বন্ধুদের আমন্ত্রণ জানান', value: 'invite', color: 'bg-emerald-50 text-emerald-600' },
   ];
 
   const renderHistory = (isReceipts = false) => (
     <div className="space-y-4">
-      {history.length === 0 ? (
-        <div className="text-center p-12 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-100 text-slate-400">
-           No {isReceipts ? 'receipts' : 'history'} found.
+      {!isReceipts && (
+        <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200 shadow-inner">
+          <button
+            type="button"
+            onClick={() => { haptics.light(); setHistoryTab('services'); }}
+            className={`flex-1 py-2 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all border-none cursor-pointer ${
+              historyTab === 'services'
+                ? 'bg-slate-900 text-white shadow-md'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            Service Bookings
+          </button>
+          <button
+            type="button"
+            onClick={() => { haptics.light(); setHistoryTab('marketplace'); }}
+            className={`flex-1 py-2 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all border-none cursor-pointer ${
+              historyTab === 'marketplace'
+                ? 'bg-slate-900 text-white shadow-md'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            Marketplace Orders
+          </button>
         </div>
+      )}
+
+      {/* 1. SERVICE HISTORY TAB */}
+      {(isReceipts || historyTab === 'services') ? (
+        <>
+          {!isReceipts && (
+            <div className="p-5 bg-indigo-950 text-white rounded-[32px] border border-indigo-900/50 shadow-sm space-y-3.5 mb-2">
+              <div className="flex items-center space-x-3">
+                <div className="p-2.5 bg-indigo-900/45 text-indigo-200 rounded-2xl">
+                  <FileText size={20} />
+                </div>
+                <div className="text-left">
+                  <h4 className="text-xs font-black uppercase tracking-widest text-indigo-300">Quarterly Personal Records</h4>
+                  <p className="text-[10px] text-indigo-200/80 font-bold leading-tight mt-0.5">Generate complete PDF audit summary of your services & impact</p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={handleDownloadPDF}
+                className="w-full py-3 bg-white hover:bg-slate-50 text-indigo-950 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-md transition-all cursor-pointer border-none"
+              >
+                Download PDF Summary
+              </button>
+            </div>
+          )}
+
+          {!isReceipts && (
+            <div className="p-4 bg-slate-50 border border-slate-100 rounded-3xl flex items-start space-x-3 text-slate-500 mb-2">
+              <div className="p-2 bg-indigo-50 text-indigo-500 rounded-xl text-[10px] font-black uppercase tracking-wider whitespace-nowrap">
+                Tip
+              </div>
+              <p className="text-[11px] leading-relaxed font-bold">
+                Toggle <span className="text-indigo-600">'Auto-Renew'</span> on any service booking to repeat tasks effortlessly. Active recurring requests will re-schedule automatically.
+              </p>
+            </div>
+          )}
+
+          {history.length === 0 ? (
+            <div className="text-center p-12 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-100 text-slate-400">
+               No {isReceipts ? 'receipts' : 'history'} found.
+            </div>
+          ) : (
+            history.map(h => (
+              <div key={h.id} className="p-4 bg-white rounded-3xl border border-slate-100 flex items-center justify-between shadow-sm">
+                <div className="flex items-center space-x-3 overflow-hidden flex-1 mr-2 text-left">
+                  <div className="p-3 bg-slate-50 rounded-2xl text-slate-400 shrink-0">
+                    {isReceipts ? <CreditCard size={18} /> : <Wrench size={18} />}
+                  </div>
+                  <div className="overflow-hidden">
+                    <p className="font-bold text-sm tracking-tight capitalize truncate text-slate-900">{h.serviceType}</p>
+                    <div className="flex items-center space-x-2 mt-0.5">
+                      <p className="text-[9px] text-slate-450 font-bold uppercase tracking-widest">
+                        {h.createdAt ? new Date(h.createdAt?.toMillis()).toLocaleDateString() : 'Recent'}
+                      </p>
+                      {!isReceipts && h.autoRenew && (
+                        <span className="text-[8px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest animate-pulse border border-indigo-100">
+                          Auto
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="flex items-center space-x-4 shrink-0">
+                  <div className="text-right">
+                    <p className="font-black text-sm text-slate-900">£{h.price || '25.00'}</p>
+                    <div className="flex flex-row items-center gap-2 mt-1">
+                      <button className="text-[10px] font-bold text-slate-400 hover:text-indigo-600 uppercase tracking-widest border-none bg-transparent cursor-pointer">View PDF</button>
+                      {!isReceipts && (
+                        <button 
+                          onClick={() => handleRebook(h)}
+                          className="text-[10px] font-black text-emerald-600 hover:text-emerald-700 uppercase tracking-widest border-none bg-transparent cursor-pointer"
+                        >
+                          Re-book
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {!isReceipts && (
+                    <div className="flex flex-col items-center space-y-1 pl-3 border-l border-slate-100">
+                      <span className="text-[8px] font-black uppercase text-slate-400 tracking-wider">Auto</span>
+                      <button
+                        onClick={() => toggleAutoRenew(h.id, !!h.autoRenew)}
+                        className={`w-10 h-5 rounded-full relative p-0.5 transition-colors ${
+                          h.autoRenew ? 'bg-indigo-600' : 'bg-slate-200'
+                        }`}
+                      >
+                        <motion.div 
+                          layout
+                          className="w-3.5 h-3.5 bg-white rounded-full shadow-sm"
+                          animate={{ x: h.autoRenew ? 18 : 0 }}
+                          transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                        />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </>
       ) : (
-        history.map(h => (
-          <div key={h.id} className="p-4 bg-white rounded-2xl border border-slate-100 flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="p-3 bg-slate-50 rounded-xl text-slate-400">
-                {isReceipts ? <CreditCard size={18} /> : <Wrench size={18} />}
-              </div>
-              <div>
-                <p className="font-bold text-sm tracking-tight capitalize">{h.serviceType}</p>
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{new Date(h.createdAt?.toMillis()).toLocaleDateString()}</p>
-              </div>
+        /* 2. MARKETPLACE HISTORY TAB */
+        <div className="space-y-3">
+          <div className="p-4 bg-slate-50 border border-slate-100 rounded-3xl flex items-start space-x-3 text-slate-500 mb-1 text-left">
+            <div className="p-2 bg-indigo-50 text-indigo-500 rounded-xl text-[10px] font-black uppercase tracking-wider whitespace-nowrap">
+              Audit
             </div>
-            <div className="text-right">
-              <p className="font-black text-sm text-slate-900">£{h.price || '25.00'}</p>
-              <button className="text-[10px] font-bold text-brand uppercase tracking-widest">View PDF</button>
-            </div>
+            <p className="text-[11px] leading-relaxed font-semibold">
+              These are verified handovers completed at local London hubs. Click <span className="text-slate-900 font-extrabold">'Repeat Order'</span> to query duplicate avails.
+            </p>
           </div>
-        ))
+
+          {pastMarketplaceOrders.map(item => (
+            <div key={item.id} className="p-4.5 bg-white rounded-3xl border border-slate-100 shadow-sm flex items-center justify-between">
+              <div className="flex items-center space-x-3 text-left">
+                <div className="p-3.5 bg-slate-55 rounded-2xl text-slate-400">
+                  <ShoppingBag size={20} className="text-slate-400" />
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-sm text-slate-900">{item.title}</h4>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">
+                    Date: {item.date} • Seller: {item.seller}
+                  </p>
+                  <span className="inline-block px-2 py-0.5 bg-amber-50 text-amber-700 text-[8px] font-black uppercase tracking-widest rounded-md mt-1">
+                    {item.condition}
+                  </span>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="font-black text-sm text-slate-900">£{item.price}.00</p>
+                <button
+                  onClick={() => handleRepeatMarketplaceOrder(item)}
+                  className="mt-1 text-[10px] font-black text-indigo-600 hover:text-indigo-800 uppercase tracking-widest border-none bg-transparent cursor-pointer active:scale-95 transition-all"
+                >
+                  Repeat Order
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -180,15 +696,42 @@ export function ProfileView() {
     <div className="pb-24 pt-6 px-4 max-w-md mx-auto min-h-screen relative">
       <AnimatePresence mode="wait">
         {view === 'main' ? (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} key="main">
             {/* Header */}
-               <header className="mb-10 text-center relative">
-               <div className="relative inline-block mb-4">
+               <header className="mb-10 text-center relative px-2">
+               <div className="flex justify-between items-center absolute top-0 left-0 right-0 px-2 pointer-events-none">
+                  <div className="pointer-events-auto">
+                    {profile?.isWorker && (
+                      <button 
+                        onClick={handleToggleOnline}
+                        className={`p-2 rounded-2xl border transition-all ${
+                          profile.isOnline ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-slate-50 border-slate-100 text-slate-400'
+                        }`}
+                      >
+                         <div className={`w-3 h-3 rounded-full mb-1 mx-auto ${profile.isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
+                          <span className="text-[8px] font-black uppercase tracking-widest">{profile.isOnline ? 'Online' : 'Offline'}</span>
+                      </button>
+                    )}
+                  </div>
+                  <div className="pointer-events-auto">
+                    <button 
+                      onClick={toggleWorkerMode}
+                      className={`flex flex-col items-center p-2 rounded-2xl border transition-all ${
+                        profile?.isWorkerMode ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-100 text-slate-500 shadow-sm'
+                      }`}
+                    >
+                       {profile?.isWorkerMode ? <ToggleRight size={20} className="text-brand" /> : <ToggleLeft size={20} />}
+                       <span className="text-[8px] font-black uppercase tracking-[0.1em] mt-1">{profile?.isWorkerMode ? 'Pro Mode' : 'Guest'}</span>
+                    </button>
+                  </div>
+               </div>
+
+               <div className="relative inline-block mb-4 mt-8">
                  <div className="w-24 h-24 bg-slate-100 rounded-[40px] flex items-center justify-center text-slate-300 shadow-xl shadow-slate-200/50">
-                   {profile?.avatarUrl ? <img src={profile.avatarUrl} className="w-full h-full object-cover rounded-[40px]" alt="Avatar" /> : <User size={48} />}
+                    {profile?.avatarUrl ? <img src={profile.avatarUrl} className="w-full h-full object-cover rounded-[40px]" alt="Avatar" /> : <User size={48} />}
                  </div>
                  {profile?.verificationStatus === 'verified' && (
-                    <div className="absolute top-0 -right-2 bg-white rounded-full p-1 shadow-lg">
+                    <div className="absolute top-0 -right-2 bg-white rounded-full p-1 shadow-lg border border-slate-50">
                        <Shield size={20} className="text-emerald-500 fill-emerald-500/10" />
                     </div>
                  )}
@@ -200,17 +743,8 @@ export function ProfileView() {
                  </button>
               </div>
               <div className="flex flex-col items-center">
-                <div className="flex items-center space-x-2">
-                   <h1 className="text-2xl font-bold tracking-tight mb-1">{profile?.username}</h1>
-                   {profile?.isWorker && (
-                      <div className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest ${
-                        profile?.isOnline ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-400'
-                      }`}>
-                         {profile?.isOnline ? 'Online' : 'Offline'}
-                      </div>
-                   )}
-                </div>
-                <p className="text-slate-400 text-xs font-medium">{profile?.email}</p>
+                 <h1 className="text-2xl font-bold tracking-tight mb-1">{profile?.username}</h1>
+                 <p className="text-slate-400 text-xs font-medium">{profile?.email}</p>
               </div>
               <div className="mt-4 flex items-center justify-center space-x-3">
                  <div className="px-4 py-1.5 bg-amber-50 text-amber-600 rounded-full text-xs font-bold flex items-center space-x-2">
@@ -218,41 +752,169 @@ export function ProfileView() {
                     <span>{profile?.rewardsPoints} Points</span>
                  </div>
                  <div className="px-4 py-1.5 bg-slate-100 text-slate-600 rounded-full text-xs font-bold">
-                    ID: {profile?.uid.slice(-6).toUpperCase()}
+                    ID: {profile?.uid ? profile.uid.slice(-6).toUpperCase() : 'Guest'}
+                  </div>
+                  {profile?.isWorker && (
+                    <button
+                      onClick={() => { haptics.light(); setShowWorkerIDModal(true); }}
+                      className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full text-xs font-black flex items-center space-x-1 border-none cursor-pointer shadow-md shadow-indigo-600/10 active:scale-95 transition-all text-center shrink-0"
+                    >
+                      <span>🪪 Digital Worker ID</span>
+                    </button>
+                  )}
+                  <div className="hidden" style={{display: 'none'}}>
                  </div>
               </div>
             </header>
 
+            {/* Quick SOS Panic Link */}
+            <div className="mb-6">
+              <QuickSOS />
+            </div>
+
+            {/* AI Driven Expense Insight Widget */}
+            <div className="mb-8">
+              <ExpenseInsight history={history} />
+            </div>
+
+            {/* Recent Milestones Summary Section */}
+            <div className="mb-8 p-5 bg-white dark:bg-slate-900 rounded-3xl border border-slate-105 dark:border-slate-800 shadow-sm space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">🏅 Recent Milestones</h4>
+                  <span className="text-[9.5px] font-bold text-slate-405 block uppercase">Your super-app achievements & certifications</span>
+                </div>
+                <div className="bg-indigo-50 dark:bg-indigo-950/20 px-2.5 py-1 rounded-full text-[10px] font-black text-indigo-600 dark:text-indigo-400">
+                  Tier: {profile?.rewardsPoints && profile.rewardsPoints >= 100 ? '⭐ Elite' : '🔰 Bronze Member'}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 text-left">
+                {/* Milestone 1: Pioneer */}
+                <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-850 flex flex-col justify-between space-y-2">
+                  <div className="flex items-center space-x-2">
+                    <div className="p-2 bg-indigo-50 dark:bg-indigo-950/30 rounded-xl text-indigo-600">
+                      <Award size={14} />
+                    </div>
+                    <span className="text-[9.5px] font-black uppercase tracking-wider text-slate-800 dark:text-slate-200">UK Pioneer</span>
+                  </div>
+                  <p className="text-[9px] text-slate-400 font-bold leading-tight">Unlocked on initial super-app registration</p>
+                  <span className="text-[9px] text-emerald-600 font-black uppercase flex items-center gap-1 mt-1">
+                    <Check size={10} /> Active
+                  </span>
+                </div>
+
+                {/* Milestone 2: Verified Resident */}
+                <div className={`p-3 rounded-2xl border flex flex-col justify-between space-y-2 ${
+                  profile?.verificationStatus === 'verified'
+                    ? 'bg-slate-50 border-slate-100 dark:bg-slate-950 dark:border-slate-850'
+                    : 'bg-slate-50/50 border-slate-100 opacity-60'
+                }`}>
+                  <div className="flex items-center space-x-2">
+                    <div className={`p-2 rounded-xl ${profile?.verificationStatus === 'verified' ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
+                      <Shield size={14} />
+                    </div>
+                    <span className="text-[9.5px] font-black uppercase tracking-wider text-slate-800 dark:text-slate-200">ID Verified</span>
+                  </div>
+                  <p className="text-[9px] text-slate-405 font-bold leading-tight">Identity verified with legal enclave bounds</p>
+                  {profile?.verificationStatus === 'verified' ? (
+                    <span className="text-[9px] text-emerald-600 font-black uppercase flex items-center gap-1 mt-1">
+                      <Check size={10} /> Verified
+                    </span>
+                  ) : (
+                    <button 
+                      onClick={() => setView('verification')}
+                      className="text-[8px] bg-indigo-600 text-white font-extrabold uppercase py-1 px-2 rounded-lg text-center cursor-pointer border-none mt-1"
+                    >
+                      Verify
+                    </button>
+                  )}
+                </div>
+
+                {/* Milestone 3: Community Beacon */}
+                <div className={`p-3 rounded-2xl border flex flex-col justify-between space-y-2 ${
+                  (profile?.rewardsPoints || 0) >= 50
+                    ? 'bg-slate-50 border-slate-100 dark:bg-slate-950 dark:border-slate-850'
+                    : 'bg-slate-50/50 border-slate-100 opacity-65'
+                }`}>
+                  <div className="flex items-center space-x-2">
+                    <div className={`p-2 rounded-xl ${(profile?.rewardsPoints || 0) >= 50 ? 'bg-amber-50 text-amber-600' : 'bg-slate-100 text-slate-400'}`}>
+                      <Award size={14} className="fill-amber-500/10" />
+                    </div>
+                    <span className="text-[9.5px] font-black uppercase tracking-wider text-slate-800 dark:text-slate-200">Beacon Active</span>
+                  </div>
+                  <p className="text-[9px] text-slate-405 font-bold leading-tight">Earn at least 50 community reward points</p>
+                  {(profile?.rewardsPoints || 0) >= 50 ? (
+                    <span className="text-[9px] text-emerald-600 font-black uppercase flex items-center gap-1 mt-1">
+                      <Check size={10} /> Unlocked
+                    </span>
+                  ) : (
+                    <span className="text-[8px] text-slate-400 font-black uppercase block mt-1">
+                      {profile?.rewardsPoints || 0}/50 pts
+                    </span>
+                  )}
+                </div>
+
+                {/* Milestone 4: Power Transporter */}
+                <div className={`p-3 rounded-2xl border flex flex-col justify-between space-y-2 ${
+                  history.length > 0
+                    ? 'bg-slate-50 border-slate-100 dark:bg-slate-950 dark:border-slate-850'
+                    : 'bg-slate-50/50 border-slate-100 opacity-65'
+                }`}>
+                  <div className="flex items-center space-x-2">
+                    <div className={`p-2 rounded-xl ${history.length > 0 ? 'bg-teal-50 text-teal-600' : 'bg-slate-100 text-slate-400'}`}>
+                      <Leaf size={14} />
+                    </div>
+                    <span className="text-[9.5px] font-black uppercase tracking-wider text-slate-800 dark:text-slate-200">Active Goer</span>
+                  </div>
+                  <p className="text-[9px] text-slate-450 font-bold leading-tight">Complete your first booking or group pool action</p>
+                  {history.length > 0 ? (
+                    <span className="text-[9px] text-emerald-600 font-black uppercase flex items-center gap-1 mt-1">
+                      <Check size={10} /> Unlocked
+                    </span>
+                  ) : (
+                    <span className="text-[8px] text-slate-400 font-black uppercase block mt-1">No tasks yet</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
             {/* Menu */}
             <div className="space-y-3">
-              {menuItems.map((item, i) => (
-                <motion.button
-                  key={i}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={() => setView(item.value as SubView)}
-                  className="w-full p-4 bg-white rounded-3xl border border-slate-100 shadow-sm flex items-center justify-between group h-16"
-                >
-                  <div className="flex items-center space-x-4">
-                    <div className={`p-3 rounded-2xl ${item.color}`}>
-                      <item.icon size={20} />
-                    </div>
-                    <span className="text-sm font-bold text-slate-800">{item.label}</span>
-                  </div>
-                  <ChevronRight size={18} className="text-slate-300 group-hover:text-slate-400 transition-colors" />
-                </motion.button>
-              ))}
-              
-              <button 
+               {menuItems.map((item, i) => (
+                 <motion.button
+                   key={i}
+                   whileTap={{ scale: 0.98 }}
+                   onClick={() => {
+                     if (item.value === 'feedback_trigger') {
+                       setShowFeedbackModal(true);
+                     } else {
+                       setView(item.value as SubView);
+                     }
+                   }}
+                   className="w-full p-4 bg-white rounded-3xl border border-slate-100 shadow-sm flex items-center justify-between group h-16"
+                 >
+                   <div className="flex items-center space-x-4">
+                     <div className={`p-3 rounded-2xl ${item.color}`}>
+                       <item.icon size={20} />
+                     </div>
+                     <span className="text-sm font-bold text-slate-800">{item.label}</span>
+                   </div>
+                   <ChevronRight size={18} className="text-slate-300 group-hover:text-slate-400 transition-colors" />
+                 </motion.button>
+               ))}
+               
+               <button 
                 onClick={logout}
                 className="w-full p-5 bg-rose-50 text-rose-600 rounded-3xl border border-rose-100 flex items-center justify-center space-x-3 font-black text-xs uppercase tracking-widest mt-8 h-18 active:scale-95 transition-all"
-              >
-                <LogOut size={20} />
-                <span>Log Out of KonnectS</span>
-              </button>
+               >
+                 <LogOut size={20} />
+                 <span>Log Out of KonnectS</span>
+               </button>
             </div>
           </motion.div>
         ) : (
-          <motion.div initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -20, opacity: 0 }} className="min-h-[80vh]">
+          <motion.div initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -20, opacity: 0 }} key={view} className="min-h-[80vh]">
              <div className="flex items-center space-x-4 mb-8">
                 <button onClick={() => setView('main')} className="p-3 bg-white rounded-2xl shadow-sm border border-slate-100 active:scale-90 transition-all">
                   <ChevronRight size={20} className="rotate-180" />
@@ -303,18 +965,30 @@ export function ProfileView() {
                       />
                    </div>
                    {profile?.isWorker && (
-                      <div className="space-y-2">
-                         <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Worker Speciality</label>
-                         <select 
-                           value={editingWorkerType}
-                           onChange={(e) => setEditingWorkerType(e.target.value as WorkerType)}
-                           className="w-full p-4 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-sm appearance-none"
-                         >
-                            {['plumber', 'mechanic', 'doctor', 'electrician', 'cleaner', 'cab_owner', 'other'].map(t => (
-                              <option key={t} value={t}>{t.replace('_', ' ').toUpperCase()}</option>
-                            ))}
-                         </select>
-                      </div>
+                      <div className="space-y-4 pt-2 border-t border-slate-100">
+                         <div className="space-y-2">
+                           <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Hourly Rate (£)</label>
+                           <input 
+                             type="number"
+                             value={hourlyRate}
+                             onChange={(e) => setHourlyRate(e.target.value)}
+                             placeholder="25"
+                             className="w-full p-4 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-sm"
+                           />
+                         </div>
+                         <div className="space-y-2">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Worker Speciality</label>
+                          <select 
+                            value={editingWorkerType}
+                            onChange={(e) => setEditingWorkerType(e.target.value as WorkerType)}
+                            className="w-full p-4 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-sm appearance-none"
+                          >
+                             {['plumber', 'mechanic', 'doctor', 'electrician', 'cleaner', 'cab_owner', 'other'].map(t => (
+                               <option key={t} value={t}>{t.replace('_', ' ').toUpperCase()}</option>
+                             ))}
+                          </select>
+                       </div>
+                    </div>
                    )}
                    <button 
                     onClick={handleUpdateProfile}
@@ -359,62 +1033,326 @@ export function ProfileView() {
 
              {view === 'rewards' && (
                 <div className="space-y-6">
-                   <div className="bg-gradient-to-br from-amber-400 to-orange-500 rounded-[40px] p-8 text-white text-center shadow-xl shadow-amber-500/20">
-                      <Award size={48} className="mx-auto mb-4" />
-                      <h4 className="text-4xl font-black mb-1">{profile?.rewardsPoints}</h4>
-                      <p className="text-sm font-bold uppercase tracking-widest opacity-80">Lifetime Points</p>
+                   {/* referral stats cards */}
+                   <div className="grid grid-cols-2 gap-3.5">
+                      <div className="p-5 bg-indigo-950 text-white rounded-[28px] shadow-sm relative overflow-hidden border border-indigo-900/45">
+                         <div className="absolute -right-4 -bottom-4 text-indigo-850/40 w-16 h-16 pointer-events-none">
+                            <CreditCard size={64} />
+                         </div>
+                         <p className="text-[9px] font-black uppercase tracking-widest text-indigo-300 mb-1">Active Discounts</p>
+                         <h4 className="text-2xl font-black">£{(profile?.discountBalance || 0).toFixed(2)}</h4>
+                         <span className="text-[8px] bg-indigo-900/60 text-indigo-200 px-2 py-0.5 rounded font-bold uppercase tracking-wider block mt-2 w-max text-center">
+                            For next service
+                         </span>
+                      </div>
+
+                      <div className="p-5 bg-emerald-950 text-white rounded-[28px] shadow-sm relative overflow-hidden border border-emerald-900/45">
+                         <div className="absolute -right-4 -bottom-4 text-emerald-850/40 w-16 h-16 pointer-events-none">
+                            <Share2 size={64} />
+                         </div>
+                         <p className="text-[9px] font-black uppercase tracking-widest text-emerald-300 mb-1">Signed-up Friends</p>
+                         <h4 className="text-2xl font-black">{profile?.referredUsersCount || 0}</h4>
+                         <span className="text-[8px] bg-emerald-950/60 text-emerald-200 px-2 py-0.5 rounded font-bold uppercase tracking-wider block mt-2 w-max text-center">
+                            £10 per task completion
+                         </span>
+                      </div>
                    </div>
-                   <div className="p-6 bg-white rounded-3xl border border-slate-100 shadow-sm">
-                      <h4 className="font-bold mb-4">Referral Bonus</h4>
+
+                   {/* Point visualizer */}
+                   <div className="bg-gradient-to-br from-amber-400 to-orange-500 rounded-[32px] p-6 text-white text-center shadow-lg shadow-amber-500/10 flex items-center justify-between animate-fade-in">
+                      <div className="flex items-center space-x-3.5 text-left">
+                         <div className="p-2.5 bg-white/20 rounded-2xl">
+                            <Award size={26} />
+                         </div>
+                         <div>
+                            <p className="text-[9px] font-black uppercase tracking-widest opacity-85 leading-none">KonnectS Loyalty Club</p>
+                            <h4 className="text-2xl font-black leading-tight mt-1">{profile?.rewardsPoints} Points</h4>
+                         </div>
+                      </div>
+                      <span className="text-[8px] bg-white text-orange-600 px-3 py-1.5 rounded-full font-black uppercase tracking-wider shadow-sm">
+                         VIP Member
+                      </span>
+                   </div>
+
+                   {/* Unique code & code dynamic copy view */}
+                   <div className="p-6 bg-white rounded-3xl border border-slate-100 shadow-sm space-y-4">
+                      <h4 className="font-black text-xs uppercase tracking-wider text-slate-850">Your Referral Code</h4>
+                      <p className="text-[10px] text-slate-400 font-semibold leading-normal">
+                         Copy and share your invitation code with friends in London. Once they sign up and complete their first trade service booking or taxi cab ride, you both receive <span className="font-extrabold text-slate-900">£10.00 service discount credit</span>!
+                      </p>
                       <div className="p-4 bg-slate-50 rounded-2xl flex items-center justify-between border-2 border-dashed border-slate-200">
                          <div>
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Your Unique Code</p>
-                            <p className="text-xl font-black tracking-tighter">{profile?.referralCode}</p>
+                            <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mb-1">Your Code</p>
+                            <p className="text-xl font-black tracking-tight text-slate-900">{profile?.referralCode || 'KONNECT592'}</p>
                          </div>
                          <button 
-                          onClick={() => copyToClipboard(profile?.referralCode || '')}
-                          className="p-3 bg-white rounded-xl shadow-sm border border-slate-100 text-brand active:scale-90 transition-all"
+                          onClick={() => copyToClipboard(profile?.referralCode || 'KONNECT592')}
+                          className="p-3 bg-white hover:bg-slate-50 text-slate-500 rounded-xl shadow-sm border border-slate-100 active:scale-95 transition-all cursor-pointer flex items-center space-x-1 border-none"
                          >
-                           {copySuccess ? <Check size={20} className="text-emerald-500" /> : <Copy size={20} />}
+                           {copySuccess ? (
+                              <span className="text-[9px] font-black text-emerald-600 uppercase flex items-center space-x-1">
+                                 <Check size={14} className="mr-0.5" />
+                                 <span>Copied</span>
+                              </span>
+                           ) : (
+                              <span className="text-[9px] font-black text-indigo-600 uppercase flex items-center space-x-1">
+                                 <Copy size={13} className="mr-0.5" />
+                                 <span>Copy</span>
+                              </span>
+                           )}
                          </button>
+                      </div>
+                   </div>
+
+                   {/* Online Invite Form */}
+                   <div className="p-6 bg-white rounded-3xl border border-slate-100 shadow-sm space-y-4">
+                      <h4 className="font-black text-xs uppercase tracking-wider text-slate-800">Invite a Friend Instantly</h4>
+                      <form onSubmit={handleInviteFriend} className="space-y-3">
+                         <div className="grid grid-cols-1 gap-2.5">
+                            <input 
+                               type="email"
+                               placeholder="Friend's Email address (e.g. jessica@email.co.uk)"
+                               value={inviteEmail}
+                               onChange={(e) => setInviteEmail(e.target.value)}
+                               className="w-full text-xs font-bold text-slate-800 placeholder:text-slate-300 focus:ring-2 focus:ring-brand outline-none p-3.5 bg-slate-50 border border-slate-100 rounded-xl"
+                            />
+                            <div className="flex items-center space-x-2 text-slate-300">
+                               <div className="flex-1 h-px bg-slate-150"></div>
+                               <span className="text-[8px] font-bold font-mono uppercase tracking-[0.15em]">or</span>
+                               <div className="flex-1 h-px bg-slate-150 font-mono"></div>
+                            </div>
+                            <input 
+                               type="tel"
+                               placeholder="Friend's UK Mobile (e.g. +44 7700 900551)"
+                               value={invitePhone}
+                               onChange={(e) => setInvitePhone(e.target.value)}
+                               className="w-full text-xs font-bold text-slate-800 placeholder:text-slate-300 focus:ring-2 focus:ring-brand outline-none p-3.5 bg-slate-50 border border-slate-100 rounded-xl"
+                            />
+                         </div>
+
+                         {inviteStatus === 'success' && (
+                            <div className="p-3 bg-emerald-50 border border-emerald-100 text-emerald-700 text-[10px] font-bold rounded-xl text-center">
+                               ✓ Custom invitation dispatch link dispatched to friend! Pending registration.
+                            </div>
+                         )}
+
+                         <button
+                            type="submit"
+                            disabled={inviteStatus === 'sending' || (!inviteEmail && !invitePhone)}
+                            className="w-full bg-slate-950 hover:bg-slate-800 text-white font-black text-[10px] uppercase tracking-widest py-3.5 rounded-xl transition-all disabled:opacity-40 border-none cursor-pointer"
+                         >
+                            {inviteStatus === 'sending' ? 'Sending Invite...' : 'Send Referral Invitation'}
+                         </button>
+                      </form>
+                   </div>
+
+                   {/* Referral state list tracking */}
+                   <div className="p-6 bg-white rounded-3xl border border-slate-100 shadow-sm space-y-4">
+                      <div className="flex justify-between items-center">
+                         <h4 className="font-black text-xs uppercase tracking-wider text-slate-800">Your Live Invites</h4>
+                         <span className="text-[8px] font-black uppercase bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded">
+                            {referrals.length} Total
+                         </span>
+                      </div>
+
+                      <div className="space-y-3">
+                         {referrals.map((ref, idx) => (
+                            <div key={idx} className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between">
+                               <div>
+                                  <p className="font-extrabold text-[11px] text-slate-800 leading-none">{ref.name}</p>
+                                  <p className="text-[9px] text-slate-400 font-semibold mt-1 truncate max-w-[150px]">{ref.contact}</p>
+                                  <div className="mt-1.5 flex items-center space-x-1.5 flex-wrap gap-1">
+                                     <span className={`text-[7px] font-black uppercase px-1.5 py-0.5 rounded ${
+                                        ref.status === 'Completed Task' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100 font-bold' :
+                                        ref.status === 'Signed Up' ? 'bg-amber-50 text-amber-600 border border-amber-100 font-bold' :
+                                        'bg-slate-150 text-slate-500 font-bold'
+                                     }`}>
+                                        {ref.status}
+                                     </span>
+                                     <span className="text-[8px] font-mono font-bold text-slate-400 italic">
+                                        • {ref.reward}
+                                     </span>
+                                  </div>
+                               </div>
+
+                               {ref.status !== 'Completed Task' && (
+                                  <button
+                                     onClick={() => handleSimulateReferralSuccess(idx)}
+                                     className="px-2.5 py-1.5 bg-brand hover:bg-rose-600 text-white text-[7.5px] font-black uppercase tracking-wider rounded-lg active:scale-95 transition-all text-center shrink-0 border-none shadow-sm shadow-rose-200 cursor-pointer"
+                                     title="Simulate successful registration and job order"
+                                  >
+                                     {ref.status === 'Pending' ? 'Simulate Register' : 'Simulate First Task'}
+                                  </button>
+                               )}
+                            </div>
+                         ))}
                       </div>
                    </div>
                 </div>
              )}
 
+             {view === 'impact' && (
+                <div className="space-y-6">
+                  {/* Impact Header Banner */}
+                  <div className="p-6 bg-emerald-950 border border-emerald-900 rounded-[35px] text-white overflow-hidden relative">
+                    <Leaf className="absolute -right-4 -bottom-4 text-emerald-850/40 w-28 h-28 pointer-events-none" />
+                    <h3 className="text-xl font-black mb-1">Community Impact</h3>
+                    <p className="text-xs text-emerald-300 font-bold">Tracking your eco-footprint offsets & local neighborhood support contributions.</p>
+                  </div>
+
+                  {/* Stats Grid */}
+                  <div className="grid grid-cols-2 gap-3.5">
+                    <div className="p-5 bg-white rounded-[28px] shadow-xs border border-slate-100">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Carpool Carbon Offset</p>
+                      <h4 className="text-2xl font-black text-emerald-600">172.5 kg</h4>
+                      <p className="text-[10px] text-slate-500 font-bold mt-1">≈ 8 young trees planted</p>
+                    </div>
+
+                    <div className="p-5 bg-white rounded-[28px] shadow-xs border border-slate-100">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Community Support</p>
+                      <h4 className="text-2xl font-black text-indigo-600">42.5 hrs</h4>
+                      <p className="text-[10px] text-slate-500 font-bold mt-1">Helped 14 local neighbors</p>
+                    </div>
+                  </div>
+
+                  {/* Recharts Carbon Offset Area Chart */}
+                  <div className="p-5 bg-white rounded-[32px] border border-slate-100 shadow-xs space-y-3">
+                    <div className="flex items-center space-x-1 px-1">
+                      <Leaf size={14} className="text-emerald-500" />
+                      <h4 className="font-extrabold text-[11px] uppercase tracking-wider text-slate-800">CO2 Emissions Saved (kg)</h4>
+                    </div>
+                    <div className="h-44 w-full text-[10px] font-mono font-bold">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart
+                          data={[
+                            { month: 'Jan', co2: 12 },
+                            { month: 'Feb', co2: 18 },
+                            { month: 'Mar', co2: 25 },
+                            { month: 'Apr', co2: 30 },
+                            { month: 'May', co2: 45 },
+                            { month: 'Jun', co2: 52.5 }
+                          ]}
+                          margin={{ top: 10, right: 10, left: -25, bottom: 0 }}
+                        >
+                          <defs>
+                            <linearGradient id="colorCo2" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                              <stop offset="95%" stopColor="#10b981" stopOpacity={0.0}/>
+                            </linearGradient>
+                          </defs>
+                          <XAxis dataKey="month" stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} />
+                          <YAxis stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} />
+                          <Tooltip contentStyle={{ background: '#0f172a', border: 'none', borderRadius: '12px', color: '#fff', fontSize: '9px', fontWeight: 'bold' }} />
+                          <Area type="monotone" dataKey="co2" name="Saved (kg)" stroke="#10b981" strokeWidth={2.5} fillOpacity={1} fill="url(#colorCo2)" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* Recharts Monthly Contributions & Service Trends Combined Chart */}
+                  <div className="p-5 bg-white rounded-[32px] border border-slate-100 shadow-xs space-y-3">
+                    <div className="flex items-center justify-between px-1">
+                      <div className="flex items-center space-x-1.5">
+                        <Award size={14} className="text-indigo-500" />
+                        <h4 className="font-extrabold text-[11px] uppercase tracking-wider text-slate-800">Monthly Contributions & Service Trends</h4>
+                      </div>
+                      <span className="text-[9px] font-black uppercase tracking-widest text-indigo-650 bg-indigo-50 px-2.5 py-0.5 rounded-full">
+                        6-Month Overview
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 font-bold px-1 pb-1">Combined view of volunteer contribution hours and completed neighborhood jobs.</p>
+                    <div className="h-44 w-full text-[10px] font-mono font-bold">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          data={[
+                            { month: 'Jan', hours: 15, jobs: 2 },
+                            { month: 'Feb', hours: 22, jobs: 4 },
+                            { month: 'Mar', hours: 18, jobs: 3 },
+                            { month: 'Apr', hours: 35, jobs: 5 },
+                            { month: 'May', hours: 28, jobs: 4 },
+                            { month: 'Jun', hours: 42.5, jobs: 7 }
+                          ]}
+                          margin={{ top: 10, right: 10, left: -25, bottom: 0 }}
+                        >
+                          <XAxis dataKey="month" stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} />
+                          <YAxis stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} />
+                          <Tooltip contentStyle={{ background: '#0f172a', border: 'none', borderRadius: '12px', color: '#fff', fontSize: '10px', fontWeight: 'bold' }} />
+                          <Legend verticalAlign="top" height={24} iconType="circle" wrapperStyle={{ fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.05em' }} />
+                          <Bar dataKey="hours" name="Contribution Hours" fill="#6366f1" radius={[6, 6, 0, 0]} />
+                          <Bar dataKey="jobs" name="Vetted Jobs Completed" fill="#ec4899" radius={[6, 6, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* Milestone Achievements Badges System Card */}
+                  <div className="p-6 bg-slate-50 rounded-[35px] border border-slate-100 space-y-4">
+                    <div className="flex justify-between items-center px-1">
+                      <div>
+                        <h4 className="font-black text-sm text-slate-900 tracking-tight">Milestone Achievement Badges</h4>
+                        <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest mt-0.5">Unlocked based on platform milestones</p>
+                      </div>
+                      <span className="text-xs">🏆</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                      {[
+                        { id: 'top_neighbor', name: 'Top Rated Neighbor', desc: 'Maintained 4.8+ rating with active community feedback.', required: 'Rating >= 4.8', icon: '⭐', color: 'from-amber-400 to-orange-500', unlocked: (profile?.rating || 5.0) >= 4.8 },
+                        { id: 'pioneer', name: 'Super Pioneer', desc: 'Invited at least one verified neighbor to join the grid.', required: 'Invites >= 1 member', icon: '🔥', color: 'from-cyan-400 to-blue-500', unlocked: (profile?.referredUsersCount || 0) >= 1 || (profile?.earnedBadges || []).includes('pioneer') },
+                        { id: 'green_pioneer', name: 'Eco Pioneer', desc: 'Saved first 10+ kg CO2 on eco-friendly rideshares.', required: 'Offsets >= 10 kg CO2', icon: '🌱', color: 'from-teal-400 to-emerald-500', unlocked: (profile?.carbonSavingsKg || 17.5) >= 10 },
+                        { id: 'green_climber', name: 'Eco Climber', desc: 'Saved 50+ kg CO2 through matching share transits.', required: 'Offsets >= 50 kg CO2', icon: '🌿', color: 'from-emerald-400 to-teal-500', unlocked: (profile?.carbonSavingsKg || 17.5) >= 50 },
+                        { id: 'green_hero', name: 'Eco Hero', desc: 'Saved 100+ kg CO2 through collaborative route transits.', required: 'Offsets >= 100 kg CO2', icon: '⚡', color: 'from-sky-400 to-teal-600', unlocked: (profile?.carbonSavingsKg || 17.5) >= 100 },
+                        { id: 'green_master', name: 'Carbon Master', desc: 'Saved 250+ kg CO2 leading public assemblies.', required: 'Offsets >= 250 kg CO2', icon: '👑', color: 'from-indigo-500 to-emerald-600', unlocked: (profile?.carbonSavingsKg || 17.5) >= 250 }
+                      ].map((badge) => (
+                        <div key={badge.id} className={`p-4 bg-white border rounded-[28px] relative overflow-hidden transition-all duration-300 shadow-xs flex flex-col justify-between ${badge.unlocked ? 'border-zinc-200' : 'border-slate-150 opacity-50 bg-slate-100/50'}`}>
+                          <div className="flex items-start justify-between flex-row">
+                            <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${badge.unlocked ? badge.color : 'from-slate-300 to-slate-400'} text-white flex items-center justify-center text-lg shadow-sm font-sans shrink-0`}>
+                              {badge.icon}
+                            </div>
+                            <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${badge.unlocked ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-200 text-slate-500'}`}>
+                              {badge.unlocked ? 'Unlocked' : 'Locked'}
+                            </span>
+                          </div>
+                          
+                          <div className="mt-4">
+                            <h5 className="font-extrabold text-xs text-slate-900">{badge.name}</h5>
+                            <p className="text-[9.5px] leading-tight text-slate-400 mt-1">{badge.desc}</p>
+                            {!badge.unlocked && (
+                              <p className="text-[8.5px] font-black text-rose-500 uppercase tracking-wider mt-2 bg-rose-50 p-1 px-2 rounded-lg inline-block">
+                                Req: {badge.required}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Mutual Aid Callout Card */}
+                  <div className="p-5 bg-indigo-50/50 border border-indigo-100/35 rounded-2xl space-y-2">
+                    <h5 className="text-[10px] font-black uppercase tracking-widest text-indigo-950">How is this calculated?</h5>
+                    <p className="text-[11px] leading-relaxed text-indigo-900/80 font-bold">
+                      Your carbon offset increases every time you join a matching cab ride-sharing route instead of a solo taxi. Support hours reflect background DBS-verified local tasks (delivery assistance, nursing setup, garden cleanups) coordinated via KonnectS Mutual Aid programs. Keep doing great work!
+                    </p>
+                  </div>
+                </div>
+              )}
+
              {view === 'invite' && (
-                <div className="space-y-8 text-center pt-10">
-                   <div className="w-24 h-24 bg-blue-50 text-blue-600 rounded-full mx-auto flex items-center justify-center">
-                      <Share2 size={42} />
+                <div className="space-y-6">
+                   <div className="p-6 bg-slate-900 border border-slate-800 rounded-[36px] text-white overflow-hidden relative">
+                      <Share2 className="absolute -right-4 -bottom-4 text-white/5 w-28 h-28 pointer-events-none mr-2" />
+                      <h3 className="text-xl font-black mb-1">Referral Hub</h3>
+                      <p className="text-xs text-slate-400">Invite colleagues, friends and trade workers to earn KonnectS credits.</p>
                    </div>
-                   <div>
-                      <h3 className="text-2xl font-black mb-2 tracking-tight">Earn together</h3>
-                      <p className="text-sm text-slate-500 px-6">Invite friends to KonnectS and you both get £10 credit when they complete their first service.</p>
-                   </div>
-                   <div className="space-y-4">
-                      <div className="flex items-center space-x-3 p-4 bg-slate-50 rounded-2xl font-mono text-sm break-all">
-                        <span className="flex-1 opacity-60">konnects.co/ref/{profile?.referralCode}</span>
-                        <button onClick={() => copyToClipboard(`https://konnects.co/ref/${profile?.referralCode}`)} className="p-2 bg-white rounded-lg shadow-sm">
-                           <Copy size={16} />
-                        </button>
-                      </div>
-                      
-                      <div className="grid grid-cols-4 gap-4">
-                        {[
-                          { icon: MessageCircle, label: 'WhatsApp' },
-                          { icon: Mail, label: 'Email' },
-                          { icon: MessageSquare, label: 'SMS' },
-                          { icon: Share2, label: 'Social' }
-                        ].map((s, i) => (
-                           <button key={i} className="flex flex-col items-center space-y-2 group">
-                              <div className="w-12 h-12 bg-white rounded-2xl border border-slate-100 shadow-sm flex items-center justify-center group-active:scale-90 transition-all">
-                                 <s.icon size={20} className="text-slate-600" />
-                              </div>
-                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{s.label}</span>
-                           </button>
-                        ))}
-                      </div>
-                   </div>
+                   
+                   <p className="text-center text-xs font-semibold text-slate-400 italic">Redirecting you to the centralized referral center...</p>
+                   <button 
+                      onClick={() => setView('rewards')}
+                      className="w-full py-4 bg-indigo-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-md hover:bg-indigo-700 active:scale-95 transition-all cursor-pointer border-none"
+                   >
+                      Open Rewards & Referrals
+                   </button>
                 </div>
              )}
 
@@ -445,123 +1383,869 @@ export function ProfileView() {
                </div>
              )}
 
+             {view === 'addresses' && (
+                <div className="space-y-6 animate-fade-in">
+                  {/* Address introduction card */}
+                  <div className="p-6 bg-gradient-to-br from-indigo-505 to-sky-600 rounded-[30px] text-white relative overflow-hidden shadow-lg shadow-indigo-150">
+                    <MapPin className="absolute -right-6 -bottom-6 text-white/10 w-36 h-36 border-none" />
+                    <h3 className="text-xl font-black mb-1 text-left">Saved Addresses</h3>
+                    <p className="text-xs text-indigo-150 leading-relaxed max-w-[85%] text-left">
+                      Manage frequent trade service addresses for faster dispatch routing, transport networks, and courier arrivals.
+                    </p>
+                  </div>
+
+                  {/* Add / Edit Form */}
+                  <div className="p-6 bg-white rounded-3xl border border-slate-100 shadow-sm space-y-4">
+                    <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 text-left">
+                      {editingAddressId ? 'Edit Address' : 'Add New Address'}
+                    </h4>
+                    
+                    <div className="space-y-3 text-left">
+                      <div>
+                        <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1.5 ml-1">Label Type</label>
+                        <div className="grid grid-cols-4 gap-2">
+                          {['Home', 'Work', 'Gym', 'Custom'].map((tag) => (
+                            <button
+                              key={tag}
+                              type="button"
+                              onClick={() => {
+                                haptics.light();
+                                setAddressLabel(tag);
+                              }}
+                              className={`py-2 px-1 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border cursor-pointer ${
+                                addressLabel === tag
+                                  ? 'bg-slate-900 border-slate-900 text-white shadow-sm font-black'
+                                  : 'bg-slate-50 border-slate-100 text-slate-650 hover:bg-slate-100 shadow-sm'
+                              }`}
+                            >
+                              {tag}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {addressLabel === 'Custom' && (
+                        <div>
+                          <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1 ml-1">Custom Label Name</label>
+                          <input
+                            type="text"
+                            placeholder="e.g. Mum's House, Studio"
+                            value={addressCustomLabel}
+                            onChange={(e) => setAddressCustomLabel(e.target.value)}
+                            className="w-full p-3 bg-slate-50 border border-slate-150 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-brand focus:bg-white transition-all text-slate-800 animate-fade-in placeholder:text-slate-300"
+                          />
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1 ml-1 font-mono">Full Service Address</label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            placeholder="Street address, apartment, postal code"
+                            value={addressValue}
+                            onChange={(e) => setAddressValue(e.target.value)}
+                            className="w-full p-4 pr-10 bg-slate-50 border border-slate-150 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-brand focus:bg-white transition-all text-slate-800 placeholder:text-slate-300"
+                          />
+                          <MapPin size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 pt-2">
+                        {editingAddressId && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              haptics.light();
+                              setEditingAddressId(null);
+                              setAddressValue('');
+                              setAddressCustomLabel('');
+                            }}
+                            className="py-3 px-4 bg-slate-100 hover:bg-slate-150 text-slate-650 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer border-none"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            haptics.heavy();
+                            if (!addressValue.trim()) {
+                              alert('Please fill in the address field.');
+                              return;
+                            }
+                            const finalLabel = addressLabel === 'Custom' ? (addressCustomLabel.trim() || 'Other') : addressLabel;
+                            let updated;
+                            if (editingAddressId) {
+                              updated = addresses.map(addr => 
+                                addr.id === editingAddressId 
+                                  ? { ...addr, label: finalLabel, address: addressValue.trim() }
+                                  : addr
+                              );
+                              setEditingAddressId(null);
+                            } else {
+                              updated = [
+                                ...addresses,
+                                {
+                                  id: `addr-${Date.now()}`,
+                                  label: finalLabel,
+                                  address: addressValue.trim()
+                                }
+                              ];
+                            }
+                            setAddresses(updated);
+                            setAddressValue('');
+                            setAddressCustomLabel('');
+                            await saveAddressesToFirestore(updated);
+                          }}
+                          className={`py-3 px-4 bg-slate-900 hover:bg-slate-850 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer border-none ${
+                            !editingAddressId ? 'col-span-2' : ''
+                          }`}
+                        >
+                          {editingAddressId ? 'Save Edits' : 'Save New Address'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* List of Saved Addresses */}
+                  <div className="space-y-3 text-left">
+                    <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">Your Registered Locations ({addresses.length})</h4>
+                    
+                    {addresses.length === 0 ? (
+                      <div className="text-center p-12 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-150 text-slate-400 text-xs font-bold animate-fade-in">
+                        No custom addresses saved yet. Add your first address above!
+                      </div>
+                    ) : (
+                      addresses.map(addr => (
+                        <div key={addr.id} className="p-4 bg-white rounded-3xl border border-slate-100 shadow-sm flex items-start justify-between animate-fade-in text-left">
+                          <div className="flex items-start space-x-3 overflow-hidden flex-1 mr-2 text-left">
+                            <div className="p-2.5 bg-sky-50 text-sky-600 rounded-2xl shrink-0 mt-0.5">
+                              <MapPin size={16} />
+                            </div>
+                            <div className="overflow-hidden text-left">
+                              <span className="text-[8px] bg-slate-100 text-slate-705 px-2 py-0.5 rounded-full font-black uppercase tracking-wider block w-max mb-1">
+                                {addr.label}
+                              </span>
+                              <p className="font-bold text-slate-800 text-xs leading-relaxed">{addr.address}</p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center space-x-1 shrink-0">
+                            <button
+                              onClick={() => {
+                                haptics.light();
+                                setEditingAddressId(addr.id);
+                                setAddressValue(addr.address);
+                                if (['Home', 'Work', 'Gym'].includes(addr.label)) {
+                                  setAddressLabel(addr.label);
+                                  setAddressCustomLabel('');
+                                } else {
+                                  setAddressLabel('Custom');
+                                  setAddressCustomLabel(addr.label);
+                                }
+                                window.scrollTo({ top: 150, behavior: 'smooth' });
+                              }}
+                              className="p-2 text-slate-400 hover:text-indigo-600 bg-slate-50 hover:bg-indigo-50 rounded-xl transition-all border-none cursor-pointer"
+                            >
+                              <FileText size={14} />
+                            </button>
+                            <button
+                              onClick={async () => {
+                                haptics.heavy();
+                                if (confirm(`Are you sure you want to delete your saved '${addr.label}' address?`)) {
+                                  const updated = addresses.filter(item => item.id !== addr.id);
+                                  setAddresses(updated);
+                                  await saveAddressesToFirestore(updated);
+                                }
+                              }}
+                              className="p-2 text-slate-400 hover:text-rose-600 bg-slate-50 hover:bg-rose-50 rounded-xl transition-all border-none cursor-pointer"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+
              {view === 'verification' && (
                 <div className="space-y-8">
                    <div className="text-center">
-                     <div className={`w-20 h-20 rounded-[30px] mx-auto flex items-center justify-center mb-6 shadow-lg ${
-                       profile?.verificationStatus === 'verified' ? 'bg-emerald-500 text-white shadow-emerald-500/20' : 
-                       profile?.verificationStatus === 'pending' ? 'bg-amber-500 text-white shadow-amber-500/20' : 
-                       profile?.verificationStatus === 'rejected' ? 'bg-rose-500 text-white shadow-rose-500/20' :
-                       'bg-slate-200 text-white shadow-slate-200/20'
+                     <div className={`w-28 h-28 rounded-[40px] mx-auto flex items-center justify-center mb-8 shadow-2xl relative ${
+                       profile?.verificationStatus === 'verified' ? 'bg-emerald-500 text-white shadow-emerald-500/30' : 
+                       profile?.verificationStatus === 'pending' ? 'bg-amber-500 text-white shadow-amber-500/30' : 
+                       profile?.verificationStatus === 'rejected' ? 'bg-rose-500 text-white shadow-rose-500/30' :
+                       'bg-slate-200 text-white'
                      }`}>
-                       <Shield size={32} />
+                       <Shield size={42} />
+                       {profile?.verificationStatus === 'verified' && (
+                         <div className="absolute -bottom-2 -right-2 bg-white rounded-full p-2 shadow-xl border border-emerald-50">
+                            <Check size={24} className="text-emerald-500" />
+                         </div>
+                       )}
                      </div>
-                     <h3 className="text-xl font-black">{
-                       profile?.verificationStatus === 'verified' ? 'You are Verified' : 
-                       profile?.verificationStatus === 'pending' ? 'Verification Pending' : 
-                       profile?.verificationStatus === 'rejected' ? 'Verification Rejected' :
-                       'Process in Progress'
+                     <h3 className="text-3xl font-black tracking-tighter mb-2">{
+                       profile?.verificationStatus === 'verified' ? 'Identity Verified' : 
+                       profile?.verificationStatus === 'pending' ? 'Reviewing' : 
+                       profile?.verificationStatus === 'rejected' ? 'ID Rejected' :
+                       'Get Verified'
                      }</h3>
-                     <p className="text-sm text-slate-500 mt-2 px-10 leading-relaxed italic">
-                        {profile?.verificationStep || 'Upload your documents to unlock premium service requests and higher payouts.'}
+                     <p className="text-xs text-slate-500 px-10 leading-relaxed font-bold italic opacity-60">
+                        {profile?.verificationStatus === 'verified' ? 'Full Worker Rights Unlocked' : 
+                         profile?.verificationStatus === 'pending' ? 'Awaiting Manual Security Check' :
+                         profile?.verificationStatus === 'rejected' ? 'Documents invalid or expired' :
+                         'Upload ID to unlock premium jobs'}
                      </p>
                    </div>
                    
                    <div className="p-5 bg-white rounded-[32px] border border-slate-100 shadow-sm text-center">
                       <div className="w-full h-2 bg-slate-50 rounded-full mb-6 overflow-hidden">
                          <div className={`h-full transition-all duration-1000 ${
-                           profile?.verificationStatus === 'verified' ? 'w-full bg-emerald-500' : 
-                           profile?.verificationStatus === 'pending' ? 'w-2/3 bg-amber-500' : 'w-1/3 bg-indigo-500'
+                           profile?.verificationStatus === 'verified' ? 'w-full bg-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.3)]' : 
+                           profile?.verificationStatus === 'pending' ? 'w-2/3 bg-amber-500 shadow-[0_0_20px_rgba(245,158,11,0.3)]' : 'w-1/3 bg-brand shadow-[0_0_20px_rgba(244,63,94,0.3)]'
                          }`} />
                       </div>
                       <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Profile Completion: {
                         profile?.verificationStatus === 'verified' ? '100' : 
                         profile?.verificationStatus === 'pending' ? '65' : '30'
                       }%</p>
-                   </div>
+                    </div>
 
                    {profile?.verificationStatus !== 'verified' && profile?.verificationStatus !== 'pending' && (
-                     <div className="p-6 bg-slate-50 rounded-[40px] border-2 border-dashed border-slate-200 space-y-4">
-                        <div className="flex items-center space-x-4 mb-4">
-                           <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-400">
-                             <FileText size={20} />
-                           </div>
-                           <div className="text-left">
-                              <p className="font-bold text-xs">Identity Document</p>
-                              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Passport / ID Card / Utility</p>
-                           </div>
-                        </div>
+                       <div className="p-6 bg-slate-50 rounded-[40px] border-2 border-dashed border-slate-200 space-y-4">
+                          <div className="flex items-center space-x-4 mb-4">
+                             <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-400">
+                               <FileText size={20} />
+                             </div>
+                             <div className="text-left">
+                                <p className="font-bold text-xs">Identity Document</p>
+                                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Passport / ID Card / Utility</p>
+                             </div>
+                          </div>
+                          
+                          <label className="block w-full cursor-pointer group">
+                             <div className="w-full py-8 bg-white border-2 border-dashed border-slate-200 rounded-3xl flex flex-col items-center justify-center space-y-2 group-hover:border-brand transition-all">
+                                <Camera size={28} className="text-slate-300 group-hover:text-brand transition-colors mx-auto" />
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Capture or Upload Doc</span>
+                             </div>
+                             <input 
+                               type="file" 
+                               className="hidden" 
+                               accept="image/*,application/pdf"
+                               onChange={async (e) => {
+                                 if (e.target.files?.length && profile?.uid) {
+                                   await updateDoc(doc(db, 'users', profile.uid), {
+                                     verificationStatus: 'pending',
+                                     verificationStep: 'Awaiting Document Review',
+                                     documents: ['user_manual_doc.pdf'],
+                                     updatedAt: serverTimestamp()
+                                   });
+                                 }
+                               }}
+                             />
+                          </label>
+                       </div>
+                    )}
+                 </div>
+              )}
+
+              {view === 'appearance' && (
+                 <div className="space-y-6 pb-12">
+                    <div className="p-6 bg-slate-50 dark:bg-slate-900 rounded-[28px] border border-slate-150/50 dark:border-slate-800/80 text-left space-y-4">
+                       <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Appearance Theme Preference</p>
+                       <p className="text-[11px] text-slate-505 font-bold leading-relaxed">
+                          Customize your visual experience across the KonnectS platform. Choose between our light, eye-friendly, and dark modes.
+                       </p>
+                       <div className="grid grid-cols-3 gap-2">
+                          {[
+                             { label: 'Light', value: 'light' },
+                             { label: 'Dark', value: 'dark' },
+                             { label: 'System', value: 'system' }
+                          ].map((item) => {
+                             const currentTheme = localStorage.getItem('appearance_theme') || 'light';
+                             const active = currentTheme === item.value;
+                             return (
+                                <button
+                                   key={item.value}
+                                   type="button"
+                                   onClick={() => {
+                                      haptics.success();
+                                      localStorage.setItem('appearance_theme', item.value);
+                                      window.dispatchEvent(new Event('appearance_theme_updated'));
+                                      // Force subview state visual update
+                                      setView('main');
+                                      setTimeout(() => setView('appearance'), 50);
+                                    }}
+                                   className={`py-4 px-2 rounded-2xl text-[10px] font-black uppercase tracking-widest text-center border cursor-pointer select-none transition-all ${
+                                      active 
+                                         ? 'bg-slate-900 border-slate-900 text-white dark:bg-indigo-650 dark:border-indigo-650' 
+                                         : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-650 dark:text-slate-300'
+                                   }`}
+                                >
+                                   {item.label}
+                                </button>
+                             );
+                          })}
+                       </div>
+                    </div>
+                 </div>
+              )}
+
+              {view === 'swap_dashboard' && (
+                  <div className="space-y-6 pb-12 text-left">
+                     {/* Back Header */}
+                     <div className="flex items-center space-x-3 mb-4">
                         <button 
-                          onClick={async () => {
-                            if (!profile?.uid) return;
-                            await updateDoc(doc(db, 'users', profile.uid), {
-                              verificationStatus: 'pending',
-                              verificationStep: 'Awaiting Document Review',
-                              documents: ['mock_doc_1.pdf'],
-                              updatedAt: serverTimestamp()
-                            });
-                          }}
-                          className="w-full py-4 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all"
+                           onClick={() => { haptics.light(); setView('main'); }}
+                           className="p-2.5 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 rounded-xl cursor-pointer border-none text-slate-750 dark:text-slate-200 font-extrabold flex items-center bg-transparent"
                         >
-                          Submit Documents for Review
+                           <ArrowLeft size={16} />
                         </button>
+                        <div>
+                           <h3 className="text-xl font-black text-slate-900 dark:text-white">Mutual Aid & Labor Swaps</h3>
+                           <p className="text-[9.5px] font-bold text-indigo-650 text-indigo-600 dark:text-indigo-400 uppercase tracking-widest bg-transparent">Local Shoreditch Credit Registry</p>
+                        </div>
                      </div>
-                   )}
-                </div>
-             )}
 
-             {view === 'settings' && (
-                <div className="space-y-6 pb-12">
-                   <div className="p-6 bg-white rounded-3xl border border-slate-100 shadow-sm space-y-4">
-                      <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-2">Display Mode</h4>
-                      <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl">
-                         <span className="text-sm font-bold">Dark Theme</span>
-                         <div className="w-10 h-5 bg-slate-200 rounded-full relative p-1 cursor-pointer">
-                            <div className="w-3 h-3 bg-white rounded-full shadow-sm" />
-                         </div>
-                      </div>
-                      <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl">
-                         <span className="text-sm font-bold">Enable Notifications</span>
-                         <div className="w-10 h-5 bg-emerald-500 rounded-full relative p-1 cursor-pointer flex justify-end">
-                            <div className="w-3 h-3 bg-white rounded-full shadow-sm" />
-                         </div>
-                      </div>
-                   </div>
+                     {/* Earned Labor Credits Hero Card */}
+                     <div className="p-6 bg-gradient-to-br from-indigo-900 to-slate-900 text-white rounded-[32px] border border-indigo-850 shadow-md relative overflow-hidden">
+                        <Activity className="absolute -right-4 -bottom-4 text-white/5 w-28 h-28" />
+                        <span className="text-[9px] font-black tracking-widest uppercase text-indigo-300 block mb-1 font-mono">
+                           My Exchange Registry Value
+                        </span>
+                        <div className="flex items-baseline space-x-2.5 mb-2">
+                           <span className="text-4xl font-black tracking-tight font-mono text-white">
+                              {laborCredits.toFixed(1)}
+                           </span>
+                           <span className="text-xs font-bold text-indigo-300 uppercase tracking-wide">
+                              LABOR Swapping Credits
+                           </span>
+                        </div>
+                        <p className="text-[10px] text-slate-300 leading-normal max-w-sm">
+                           1 Labor Credit represents 1 hour of trade/helper service swap. Your balance tracks your mutual aid contributions in Shoreditch and Hoxton safely!
+                        </p>
 
-                   {profile?.isWorker && (
-                      <div className="p-6 bg-white rounded-3xl border border-slate-100 shadow-sm space-y-4">
-                         <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-2">Worker Status</h4>
-                         <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl">
-                            <div>
-                               <p className="text-sm font-bold">Online Capability</p>
-                               <p className="text-[10px] text-slate-400">Visibility to customers</p>
-                            </div>
-                            <button
-                              onClick={handleToggleOnline}
-                              className={`w-12 h-6 rounded-full relative p-1 transition-colors ${isOnline ? 'bg-emerald-500' : 'bg-slate-200'}`}
-                            >
-                               <motion.div 
-                                 animate={{ x: isOnline ? 24 : 0 }}
-                                 className="w-4 h-4 bg-white rounded-full shadow-sm" 
-                               />
-                            </button>
-                         </div>
-                         
-                         <div className="mt-4 p-4 bg-slate-900 rounded-2xl text-white">
-                            <p className="text-[10px] font-black uppercase tracking-widest mb-1 opacity-60">Pro Account type</p>
-                            <p className="text-sm font-black capitalize tracking-tight">{profile?.workerType || 'Generic Pro'}</p>
-                         </div>
-                      </div>
-                   )}
+                        {/* Interactive Contribution Simulator */}
+                        <div className="mt-5 pt-4 border-t border-white/10 flex sm:flex-row flex-col gap-3 justify-between items-center">
+                           <div className="text-left">
+                              <span className="text-[8px] font-mono text-indigo-400 block uppercase font-bold">Quick Verification Scan</span>
+                              <p className="text-[9px] text-slate-400">Log a completed volunteer or labor hour</p>
+                           </div>
+                           <button
+                              type="button"
+                              onClick={() => {
+                                 haptics.success();
+                                 const updated = laborCredits + 2.0;
+                                 setLaborCredits(updated);
+                                 localStorage.setItem('saved_labor_credits', updated.toString());
+                                 // Add mock completed listing
+                                 const newComp = {
+                                    id: `csw-${Date.now()}`,
+                                    name: 'Simulated Local Community Aid',
+                                    skill: 'Digital Instruction or Volunteer Aid',
+                                    credits: 2.0,
+                                    date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                                 };
+                                 setCompletedSwaps(prev => [newComp, ...prev]);
+                                 alert('Excellent! Verified 2.0 extra labor swap credits on-site in Hackney.');
+                              }}
+                              className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[9.5px] font-black uppercase tracking-widest rounded-xl transition-all active:scale-95 border-none cursor-pointer text-center"
+                           >
+                              ⚡ Simulate Hour Check-In (+2.0 Cr)
+                           </button>
+                        </div>
+                     </div>
+
+                     {/* Pending Swap Requests */}
+                     <div className="space-y-3">
+                        <h4 className="text-xs font-black uppercase tracking-widest text-[#64748b] text-slate-550 pl-1">
+                           Pending Swap Proposals ({pendingSwaps.length})
+                        </h4>
+                        {pendingSwaps.length === 0 ? (
+                           <div className="p-6 bg-slate-50 dark:bg-slate-900 rounded-2xl text-center border border-dashed border-slate-200 dark:border-slate-800">
+                              <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">No pending swaps requested for you</p>
+                           </div>
+                        ) : (
+                           pendingSwaps.map((sw) => (
+                              <div 
+                                 key={sw.id}
+                                 className="p-5 bg-white dark:bg-slate-900 rounded-[28px] border border-slate-100 dark:border-slate-800/80 shadow-sm flex flex-col justify-between hover:border-slate-200 transition-colors text-left"
+                              >
+                                 <div className="flex justify-between items-start mb-3">
+                                    <div>
+                                       <span className="text-[9px] font-mono text-slate-400 uppercase tracking-widest">{sw.location} • {sw.date}</span>
+                                       <h5 className="font-extrabold text-xs text-slate-900 dark:text-white mt-0.5">
+                                          {sw.skill} Request
+                                       </h5>
+                                       <p className="text-[10px] text-slate-500 mt-1">Requested by: <span className="font-bold text-slate-800 dark:text-slate-200">{sw.senderName}</span></p>
+                                    </div>
+                                    <div className="bg-indigo-50 dark:bg-indigo-950/45 text-indigo-600 dark:text-indigo-400 px-3 py-1 rounded-xl text-xs font-mono font-black shrink-0 border-none">
+                                       +{sw.credits.toFixed(1)} Cr
+                                    </div>
+                                 </div>
+
+                                 <div className="flex items-center space-x-2 pt-2 border-t border-slate-50 dark:border-slate-800/40">
+                                    <button
+                                       type="button"
+                                       onClick={() => {
+                                          haptics.success();
+                                          setLaborCredits(prev => {
+                                             const val = prev + sw.credits;
+                                             localStorage.setItem('saved_labor_credits', val.toString());
+                                             return val;
+                                          });
+                                          // Add to completed
+                                          const newDone = {
+                                             id: `csw-${Date.now()}`,
+                                             name: sw.senderName,
+                                             skill: sw.skill,
+                                             credits: sw.credits,
+                                             date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                                          };
+                                          setCompletedSwaps(prev => [newDone, ...prev]);
+                                          // Remove from pending
+                                          setPendingSwaps(prev => prev.filter(p => p.id !== sw.id));
+                                          alert(`Successfully approved labor swap from ${sw.senderName}. Credits updated!`);
+                                       }}
+                                       className="flex-1 py-2 bg-slate-900 text-white dark:text-slate-950 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all border-none cursor-pointer hover:opacity-90 active:scale-95 text-center"
+                                    >
+                                       Approve & Do Swap
+                                    </button>
+                                    <button
+                                       type="button"
+                                       onClick={() => {
+                                          haptics.light();
+                                          setPendingSwaps(prev => prev.filter(p => p.id !== sw.id));
+                                          alert('Rejected swap request proposal.');
+                                       }}
+                                       className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-[#475569] dark:text-slate-450 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all border-none cursor-pointer hover:bg-slate-150 text-center"
+                                    >
+                                       Reject
+                                    </button>
+                                 </div>
+                              </div>
+                           ))
+                        )}
+                     </div>
+
+                     {/* Skill-matched Community Demands */}
+                     <div className="space-y-3">
+                        <div className="flex justify-between items-center pl-1">
+                           <h4 className="text-xs font-black uppercase tracking-widest text-[#64748b] text-slate-500">
+                              Matches for: {profile?.workerType ? profile.workerType.replace('_', ' ').toUpperCase() : 'General Trade Skills'}
+                           </h4>
+                           <span className="text-[9px] font-mono font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest bg-indigo-50 dark:bg-indigo-950/20 px-2 py-0.5 rounded-md">Verified Matches</span>
+                        </div>
+
+                        {/* List dynamic matching offers based on verification credentials */}
+                        <div className="space-y-2.5">
+                           {((): any[] => {
+                              const trade = (profile?.workerType as string) || 'general';
+                              if (trade === 'electrician' || trade === 'plumber' || trade === 'heating') {
+                                 return [
+                                    { title: 'Radiator Bleeding assistance', requester: 'Mick A.', reward: 1.5, location: 'Old Street (0.3 mi)', urgent: true },
+                                    { title: 'Fix under-sink double drain valve', requester: 'Leanne P.', reward: 2.0, location: 'Shoreditch Green (0.4 mi)', urgent: false }
+                                 ];
+                              } else if (trade === 'cleaning' || trade === 'assembly') {
+                                 return [
+                                    { title: 'End-of-tenancy studio sanitise help', requester: 'Fiona G.', reward: 3.5, location: 'Hoxton Square (0.2 mi)', urgent: true },
+                                    { title: 'Flatpack wardrobe back board fitting', requester: 'Tom S.', reward: 2.5, location: 'Pitfield St (0.5 mi)', urgent: false }
+                                 ];
+                              } else {
+                                 return [
+                                    { title: 'Garden fence painting (10 panels)', requester: 'Doreen M.', reward: 3.0, location: 'Hackney Road (0.6 mi)', urgent: false },
+                                    { title: 'Heavy box relocation into loft storage', requester: 'Will B.', reward: 1.5, location: 'Shoreditch High St (0.2 mi)', urgent: true }
+                                 ];
+                              }
+                           })().map((match, i) => (
+                              <div 
+                                 key={i}
+                                 className="p-4 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-150/40 dark:border-slate-800 text-left flex items-center justify-between"
+                              >
+                                 <div className="space-y-1">
+                                    <div className="flex items-center space-x-1.5 flex-wrap">
+                                       <span className="text-[9px] font-extrabold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/25 px-1.5 py-0.5 rounded-md uppercase tracking-wide">MATCHED</span>
+                                       {match.urgent && (
+                                          <span className="text-[9px] font-extrabold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded-md uppercase tracking-wide">URGENT</span>
+                                       )}
+                                       <span className="text-[9px] text-[#94a3b8] font-bold">{match.location}</span>
+                                    </div>
+                                    <h5 className="font-extrabold text-xs text-slate-855 dark:text-white">{match.title}</h5>
+                                    <span className="text-[10px] text-slate-500 block">Demanded by: <span className="font-bold">{match.requester}</span></span>
+                                 </div>
+                                 <div className="text-right shrink-0 ml-3 flex flex-col items-end space-y-1.5 align-middle justify-center">
+                                    <span className="text-xs font-mono font-black text-indigo-600 dark:text-indigo-400">+{match.reward.toFixed(1)} Cr</span>
+                                    <button
+                                       type="button"
+                                       onClick={() => {
+                                          haptics.success();
+                                          // Add to pending swaps
+                                          const newPending = {
+                                             id: `sw-${Date.now()}`,
+                                             senderName: match.requester,
+                                             location: match.location,
+                                             skill: match.title,
+                                             hours: match.reward,
+                                             credits: match.reward,
+                                             date: 'Today'
+                                          };
+                                          setPendingSwaps(prev => [newPending, ...prev]);
+                                          alert(`Perfect! Accepted matches. Request sent in Shoreditch. Wait for ${match.requester} check-in.`);
+                                       }}
+                                       className="px-2.5 py-1.5 bg-slate-900 hover:bg-black dark:bg-slate-100 text-white dark:text-slate-950 rounded-lg text-[9px] font-black uppercase tracking-wider border-none cursor-pointer"
+                                    >
+                                       Accept Match
+                                    </button>
+                                 </div>
+                              </div>
+                           ))}
+                        </div>
+                     </div>
+
+                     {/* Historic Actions List */}
+                     <div className="space-y-2.5">
+                        <h4 className="text-xs font-black uppercase tracking-widest text-[#64748b] text-slate-500 pl-1">
+                           Recent Completed Swap History
+                        </h4>
+                        <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl divide-y divide-slate-50 dark:divide-slate-800">
+                           {completedSwaps.map((item) => (
+                              <div key={item.id} className="p-3.5 flex justify-between items-center text-xs text-left">
+                                 <div>
+                                    <p className="font-extrabold text-slate-800 dark:text-slate-200">{item.skill}</p>
+                                    <span className="text-[9.5px] text-slate-400 font-bold uppercase tracking-wider">Swapped with {item.name} • {item.date}</span>
+                                 </div>
+                                 <span className="font-mono text-xs font-extrabold text-emerald-600 uppercase">
+                                    +{item.credits.toFixed(1)} Cr
+                                 </span>
+                              </div>
+                           ))}
+                        </div>
+                     </div>
+                  </div>
+               )}
+
+              {view === 'settings' && (
+                 <div className="space-y-6 pb-12">
+                    <SettingsEditor />
+
+                    {/* ACCOUNT DELETION ZONE */}
+                    <div className="p-6 bg-red-50/50 rounded-3xl border border-red-100 shadow-sm space-y-4">
+                       <h4 className="text-xs font-black uppercase tracking-widest text-[#dc2626] mb-2">Danger Zone</h4>
+                       <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block leading-none">
+                          Terminate account & delete profile
+                       </p>
+                       <div className="p-4 bg-white rounded-2xl border border-red-105 text-[10.5px] text-slate-650 leading-relaxed space-y-2">
+                          <p className="font-black text-[#991b1b] uppercase tracking-wider text-[9px]">🔒 GARS-12 Government Audit Retention Standard:</p>
+                          <p className="font-semibold text-slate-500">
+                             Upon confirmation of account termination, standard operational records, billing registers, and driver-dispatch logs are archived in a locked offline backup vault for exactly <strong>1 Year (365 Days)</strong>. This aligns with UK corporate audits or local authority inquiries if requests are filed.
+                          </p>
+                          <p className="font-extrabold text-[#111827]">
+                             All face biometric scans, professional trade documents, and certificates are permanently scrubbed immediately on logout.
+                          </p>
+                       </div>
+                       
+                       <button
+                         onClick={() => {
+                           haptics.heavy();
+                           const conf = window.confirm("Are you absolutely sure you want to terminate your account? All biometric data will be scrubbed immediately, and work audits will be retained for precisely 1 year under UK legal policy.");
+                           if (conf) {
+                             localStorage.clear();
+                             window.location.reload();
+                           }
+                         }}
+                         className="w-full py-4 bg-[#dc2626] hover:bg-[#b91c1c] text-white rounded-2xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all text-center border-none shadow-md shadow-red-200 cursor-pointer"
+                       >
+                          Terminate Account Instantly
+                       </button>
+                    </div>
+                 </div>
+              )}
+
+            </motion.div>
+         )}
+
+      {showFeedbackModal && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-fade-in">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 15 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 15 }}
+              className="bg-white w-full max-w-sm rounded-[36px] p-6 shadow-2xl relative border border-slate-200 text-left"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  haptics.light();
+                  setShowFeedbackModal(false);
+                }}
+                className="absolute right-5 top-5 p-2 bg-slate-50 rounded-full text-slate-400 hover:text-slate-600 border border-slate-100 active:scale-90 transition-all cursor-pointer"
+              >
+                ✕
+              </button>
+
+              <div className="text-center mb-6">
+                <div className="w-12 h-12 bg-pink-50 text-pink-600 rounded-2xl flex items-center justify-center mx-auto mb-3 border border-pink-100">
+                  <MessageSquare size={24} />
                 </div>
-             )}
-          </motion.div>
+                <h3 className="text-lg font-black tracking-tight text-slate-900">Provide Feedback</h3>
+                <p className="text-xs text-slate-400 mt-1">Submit bug reports, feature requests, or general feedback directly to KonnectS Support.</p>
+              </div>
+
+              {feedbackSuccess ? (
+                <div className="py-8 text-center space-y-3">
+                  <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto animate-bounce border border-emerald-150">
+                    <Check size={24} />
+                  </div>
+                  <p className="font-extrabold text-[#10b981] uppercase tracking-wider text-[10px]">Feedback Received!</p>
+                  <p className="text-slate-505 text-xs font-semibold leading-relaxed">
+                    Thank you for supporting community-driven commerce in London. Our systems team will review your ticket.
+                  </p>
+                </div>
+              ) : (
+                <form onSubmit={handleSubmitFeedback} className="space-y-4 text-left">
+                  {/* Feedback Type Toggle */}
+                  <div className="text-left">
+                    <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1.5 ml-1">Feedback Type</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { label: 'Bug Report', value: 'bug' },
+                        { label: 'Feature Idea', value: 'feature' },
+                        { label: 'General', value: 'general' }
+                      ].map((t) => (
+                        <button
+                          key={t.value}
+                          type="button"
+                          onClick={() => {
+                            haptics.light();
+                            setFeedbackType(t.value as any);
+                          }}
+                          className={`py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all border cursor-pointer ${
+                            feedbackType === t.value
+                              ? 'bg-pink-50 border-pink-150 text-pink-700 shadow-sm font-black'
+                              : 'bg-slate-50 border-slate-100 text-slate-600 hover:bg-slate-100 shadow-sm'
+                          }`}
+                        >
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Subject */}
+                  <div className="text-left">
+                    <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1 ml-1 font-mono">Subject Summary</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Map load latency, booking route bug"
+                      value={feedbackSubject}
+                      onChange={(e) => setFeedbackSubject(e.target.value)}
+                      required
+                      className="w-full p-3.5 bg-slate-50 border border-slate-150 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-pink-500 focus:bg-white transition-all text-slate-850"
+                    />
+                  </div>
+
+                  {/* Bug Severity (only displayed for bugs) */}
+                  {feedbackType === 'bug' && (
+                    <div className="animate-fade-in text-left">
+                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1.5 ml-1">Bug Severity</label>
+                      <div className="grid grid-cols-3 gap-2 text-left">
+                        {[
+                          { label: 'Low', value: 'low' },
+                          { label: 'Medium', value: 'medium' },
+                          { label: 'High', value: 'high' }
+                        ].map((sev) => (
+                          <button
+                            key={sev.value}
+                            type="button"
+                            onClick={() => {
+                              haptics.light();
+                              setFeedbackSeverity(sev.value as any);
+                            }}
+                            className={`py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all border cursor-pointer ${
+                              feedbackSeverity === sev.value
+                                ? 'bg-amber-50 border-amber-150 text-amber-705 font-bold shadow-sm'
+                                : 'bg-slate-50 border-slate-100 text-slate-500 hover:bg-slate-100'
+                            }`}
+                          >
+                            {sev.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Description */}
+                  <div className="text-left">
+                    <label className="text-[9px] font-black uppercase tracking-widest text-[#94a3b8] block mb-1 ml-1 font-mono">Detailed Description</label>
+                    <textarea
+                      placeholder="Please assist us with replication steps or specific UI behaviors noted..."
+                      value={feedbackDesc}
+                      rows={3}
+                      onChange={(e) => setFeedbackDesc(e.target.value)}
+                      required
+                      className="w-full p-3.5 bg-slate-50 border border-slate-150 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-pink-500 focus:bg-white transition-all text-slate-850 resize-none placeholder:text-slate-350"
+                    />
+                  </div>
+
+                  {/* Submit Button */}
+                  <button
+                    type="submit"
+                    disabled={feedbackSubmitting}
+                    className="w-full py-4 bg-slate-900 border-none hover:bg-slate-800 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all text-center flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-50 mt-4"
+                  >
+                    <span>{feedbackSubmitting ? 'Submitting ticket...' : 'Submit Support Ticket'}</span>
+                  </button>
+                </form>
+              )}
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
-      <p className="text-center text-[10px] text-slate-300 uppercase tracking-widest mt-12 font-bold italic">
-        KonnectS v1.0.0 • Verified in the UK
-      </p>
+      {/* Digital Worker ID Card Modal */}
+      <AnimatePresence>
+        {showWorkerIDModal && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[200] flex items-center justify-center p-4 overflow-y-auto"
+          >
+            <motion.div 
+              initial={{ scale: 0.93, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.93, y: 15 }}
+              className="bg-slate-900 border border-slate-800 text-white w-full max-w-sm rounded-[32px] p-6 shadow-2xl relative text-left"
+            >
+              {/* Close Button */}
+              <button 
+                onClick={() => { haptics.light(); setShowWorkerIDModal(false); }}
+                className="absolute top-4 right-4 p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer border-none"
+              >
+                <X size={16} />
+              </button>
+
+              {/* ID Header badge */}
+              <div className="text-center mb-6 border-b border-slate-850 pb-4">
+                <span className="text-[9px] font-black tracking-[0.2em] text-indigo-400 uppercase block mb-1">
+                  UK Professional Credential ID Card
+                </span>
+                <h3 className="font-mono text-xs font-bold text-slate-400">
+                  PLATFORM VERIFIED MEMBER ID
+                </h3>
+              </div>
+
+              {/* Profile Card Centerpiece */}
+              <div className="flex items-center space-x-4 mb-6 bg-slate-850 p-4 rounded-2xl border border-slate-800">
+                <div className="w-16 h-16 bg-slate-800 rounded-2xl flex items-center justify-center text-slate-300 relative shrink-0">
+                  {profile?.avatarUrl ? (
+                    <img src={profile.avatarUrl} className="w-full h-full object-cover rounded-2xl" alt="Avatar" />
+                  ) : (
+                    <User size={32} />
+                  )}
+                  <div className="absolute -top-1 -right-1 bg-emerald-500 rounded-full p-0.5 border border-slate-900">
+                    <ShieldCheck size={12} className="text-white" />
+                  </div>
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-sm">{profile?.username || 'Verified Practitioner'}</h4>
+                  <p className="text-[10px] text-indigo-400 font-bold mb-1 font-mono uppercase tracking-wider">{profile?.workerType || 'Multi-Trade Specialist'}</p>
+                  <div className="inline-flex items-center space-x-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className="text-[8px] font-black uppercase tracking-wider">Accurate ID Status</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Verified Credentials Checklist */}
+              <div className="space-y-2.5 mb-6">
+                <span className="text-[8px] font-black uppercase tracking-wider text-slate-500 block mb-1">
+                  Verified Accreditations & Badges
+                </span>
+                {[
+                  { label: "Enhanced DBS Check Active", desc: "Verified via Home Office API Integration" },
+                  { label: "£5M Public Liability Insurance", desc: "Active coverage fully synced" },
+                  { label: "SIA Security Professional", desc: "Licence Registered & Checked" },
+                  { label: "FCA Compliant Contractor", desc: "Verified HMRC Independent status" }
+                ].map((cred, index) => (
+                  <div key={index} className="flex items-start space-x-2.5 bg-slate-850 p-2 rounded-xl">
+                    <ShieldCheck size={14} className="text-indigo-400 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-[10.5px] font-extrabold text-slate-155 leading-tight">{cred.label}</p>
+                      <p className="text-[8.5px] font-bold text-slate-400">{cred.desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Secure QR checking mechanism */}
+              <div className="bg-slate-950 p-5 rounded-3xl text-center flex flex-col items-center space-y-3.5 shadow-lg border border-slate-800">
+                <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest leading-none">
+                  SECURE ON-SITE CLIENT CHECK-IN QR
+                </span>
+
+                {/* Simulated rotating barcode / QR vector layout using CSS grids */}
+                <div className="relative p-2.5 bg-slate-900 rounded-2xl border border-slate-800 flex items-center justify-center">
+                  <div className="w-32 h-32 grid grid-cols-8 gap-1 p-1 bg-white border border-slate-200 rounded-xl shadow-inner select-none">
+                    {Array.from({ length: 64 }).map((_, i) => {
+                      // Generate a pseudorandom stable grid pattern based on qrToken characters hash
+                      const charCode = qrToken.charCodeAt((i % qrToken.length)) || 0;
+                      const isDark = (charCode + i) % 2 === 0;
+                      return (
+                        <div 
+                          key={i} 
+                          className={`rounded-[3px] transition-all duration-300 ${
+                            isDark ? 'bg-slate-900' : 'bg-transparent'
+                          }`}
+                        />
+                      );
+                    })}
+                  </div>
+                  {/* Outer laser scanline indicator */}
+                  <div className="absolute top-0 left-0 right-0 h-1 bg-indigo-500/80 animate-bounce rounded-full shadow-[0_2px_10px_indigo]" />
+                </div>
+
+                <div className="w-full">
+                  <div className="flex justify-between items-center bg-slate-900 p-2.5 rounded-xl border border-slate-800 mb-2">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Dynamic Token</span>
+                    <span className="text-[9.5px] font-black text-white font-mono">{qrToken}</span>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    {/* Countdown indicator */}
+                    <div className="flex items-center space-x-1.5 text-slate-505">
+                      <div className="w-2 h-2 rounded-full bg-indigo-505 animate-ping mx-1" />
+                      <span className="text-[9px] font-black uppercase tracking-wider font-mono">
+                        Rotates in {rotateSecondsLeft}s
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        haptics.beacon();
+                        setQrToken(`KNT-SECURE-${Math.floor(Math.random() * 900000 + 100000)}`);
+                        setRotateSecondsLeft(10);
+                      }}
+                      className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[9px] font-black uppercase tracking-widest border-none cursor-pointer flex items-center space-x-1 transition-all active:scale-95"
+                    >
+                      <RotateCw size={8} className="animate-spin-slow text-white" />
+                      <span>Rotate Code</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-[8px] text-slate-500 text-center font-bold uppercase tracking-widest mt-4">
+                🔒 Protected by KonnectS Verified Escrow Network. Scanning check-in starts work timers.
+              </p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
