@@ -1,6 +1,6 @@
 {
   "name": "KonnectS",
-  "description": "UK's all-in-one super app for services, marketplace, ride-sharing, and community support with AI assistance.",
+  "description": "UK's super app with a real-time twin Supabase + Firebase hybrid cloud storage bridge, AI diagnostics, marketplaces, rides, and local services.",
   "requestFramePermissions": [
     "camera",
     "microphone",

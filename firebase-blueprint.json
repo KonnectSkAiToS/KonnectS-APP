@@ -180,6 +180,41 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["ownerId", "title", "pricePerDay", "escrowAmount", "status", "createdAt"]
+    },
+    "HmrcLog": {
+      "title": "HMRC Business Expense and Mileage Log",
+      "description": "Log entries for TFL travel mileage and contractor work expense receipts",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "workerId": { "type": "string" },
+        "type": { "type": "string", "enum": ["mileage", "receipt"] },
+        "description": { "type": "string" },
+        "distance": { "type": "number" },
+        "amount": { "type": "number" },
+        "date": { "type": "string" },
+        "category": { "type": "string" },
+        "receiptPhoto": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["workerId", "type", "description", "amount", "date", "createdAt"]
+    },
+    "ContractorCrm": {
+      "title": "Contractor CRM Service Reminder",
+      "description": "Reminders for scheduled local contractor services and appointments",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "contractorId": { "type": "string" },
+        "clientName": { "type": "string" },
+        "serviceType": { "type": "string" },
+        "frequency": { "type": "string" },
+        "nextDate": { "type": "string" },
+        "notes": { "type": "string" },
+        "completed": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["contractorId", "clientName", "serviceType", "frequency", "nextDate", "createdAt"]
     }
   },
   "firestore": {
@@ -254,6 +289,14 @@
     "/rentals/{rentalId}": {
       "schema": "P2pRental",
       "description": "Secured peer-to-peer rentals"
+    },
+    "/hmrc_logs/{logId}": {
+      "schema": "HmrcLog",
+      "description": "Log entries for contractor travel mileage and purchase receipts"
+    },
+    "/contractor_crm/{crmId}": {
+      "schema": "ContractorCrm",
+      "description": "Reminders for scheduled customer maintenance and work appointments"
     }
   }
 }

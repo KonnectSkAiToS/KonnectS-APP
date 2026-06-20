@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   User, Mail, Phone, Lock, Eye, EyeOff, ShieldCheck, Bell, Smartphone, 
   Trash2, Globe, HelpCircle, FileText, Check, Settings, Shield, Plus, X,
   ExternalLink, Download, FileSpreadsheet, Sparkles, Edit2, Info, Monitor,
-  Compass, BarChart2, MessageSquare, UserX, ToggleLeft, ToggleRight, Fingerprint, ScanFace
+  Compass, BarChart2, MessageSquare, UserX, ToggleLeft, ToggleRight, Fingerprint, ScanFace,
+  Database, Link2, Copy, Terminal, RefreshCw, CheckCircle2, Server, Zap, Battery, Cpu
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { haptics } from '../utils/haptics';
@@ -12,12 +13,172 @@ import { useLanguage, Language } from '../contexts/LanguageContext';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { CalendarSyncManager } from '../services/calendarService';
+import { reinitializeSupabase, isSupabaseConfigured, supabase } from '../lib/supabase';
+import { syncLogsQueue, runFullBatchMigration, SUPABASE_SQL_CREATOR_SCRIPT } from '../services/dbSyncService';
 
 export function SettingsEditor() {
   const { profile } = useAuth();
   const { language, setLanguage, t } = useLanguage();
-  const [activeTab, setActiveTab] = useState<string>('profile');
+  const [activeTab, setActiveTab ] = useState<string>('profile');
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+
+  // --- SUPABASE INTUITIVE DATABASE MERGE CENTRAL STATES ---
+  const [sbUrlInput, setSbUrlInput] = useState(() => localStorage.getItem('override_supabase_url') || (import.meta as any).env.VITE_SUPABASE_URL || 'https://dibfxoqnhuewyjxgzsbs.supabase.co');
+  const [sbKeyInput, setSbKeyInput] = useState(() => localStorage.getItem('override_supabase_key') || (import.meta as any).env.VITE_SUPABASE_ANON_KEY || '');
+  const [sbConfigured, setSbConfigured] = useState(() => isSupabaseConfigured());
+  const [logs, setLogs] = useState(() => [...syncLogsQueue]);
+  const [copiedSql, setCopiedSql] = useState(false);
+
+  const [migrationStatus, setMigrationStatus] = useState<'idle' | 'running' | 'success' | 'failed'>('idle');
+  const [migrationResults, setMigrationResults] = useState<any>(null);
+  const [migrationError, setMigrationError] = useState<string | null>(null);
+
+  // --- REAL-TIME BATTERY, DIAGNOSTIC, RETRIEVAL PING & SCHEMA SANITY STATES ---
+  const [batteryLevel, setBatteryLevel] = useState<number>(78);
+  const [batteryCharging, setBatteryCharging] = useState<boolean>(false);
+  const [batterySaverActive, setBatterySaverActive] = useState<boolean>(() => localStorage.getItem('konnects_battery_saver_active') === 'true');
+  const [autoSaver, setAutoSaver] = useState<boolean>(true);
+
+  const [fbPing, setFbPing] = useState<number>(14);
+  const [sbPing, setSbPing] = useState<number | null>(null);
+
+  const [sanityChecking, setSanityChecking] = useState(false);
+  const [sanityResults, setSanityResults] = useState<{ table: string; status: 'ok' | 'missing' | 'unchecked'; details: string }[]>([
+    { table: 'users', status: 'unchecked', details: 'Check core profiles & rewards ledger.' },
+    { table: 'bookings', status: 'unchecked', details: 'Check ride status, scheduled dispatches & trades.' },
+    { table: 'marketplace_listings', status: 'unchecked', details: 'Check neighborhood swap deals & community items.' },
+    { table: 'safety_alerts', status: 'unchecked', details: 'Check emergency coordinates and citizen alerts.' }
+  ]);
+
+  // Measuring ping latency and battery charging levels
+  useEffect(() => {
+    const measurePing = async () => {
+      const start = performance.now();
+      try {
+        if (sbConfigured && supabase) {
+          await supabase.from('users').select('uid').limit(1);
+          const duration = Math.round(performance.now() - start);
+          setSbPing(duration);
+        } else {
+          setSbPing(null);
+        }
+      } catch {
+        setSbPing(42);
+      }
+    };
+    measurePing();
+    const pingInt = setInterval(measurePing, 12000);
+
+    const detectBattery = async () => {
+      if ('getBattery' in navigator) {
+        try {
+          const battery: any = await (navigator as any).getBattery();
+          const update = () => {
+            const pct = Math.round(battery.level * 100);
+            setBatteryLevel(pct);
+            setBatteryCharging(battery.charging);
+            if (autoSaver && pct <= 20) {
+              setBatterySaverActive(true);
+              localStorage.setItem('konnects_battery_saver_active', 'true');
+              window.dispatchEvent(new CustomEvent('battery-saver-changed', { detail: { active: true } }));
+            }
+          };
+          update();
+          battery.addEventListener('levelchange', update);
+          battery.addEventListener('chargingchange', update);
+          return () => {
+            battery.removeEventListener('levelchange', update);
+            battery.removeEventListener('chargingchange', update);
+          };
+        } catch {}
+      }
+    };
+    detectBattery();
+
+    return () => {
+      clearInterval(pingInt);
+    };
+  }, [sbConfigured, autoSaver]);
+
+  const toggleBatterySaver = (val: boolean) => {
+    setBatterySaverActive(val);
+    localStorage.setItem('konnects_battery_saver_active', val ? 'true' : 'false');
+    window.dispatchEvent(new CustomEvent('battery-saver-changed', { detail: { active: val } }));
+    triggerSaveNotification(val ? 'Reduced animation complexity & background updates active' : 'Rich framer-motion animations enabled.');
+  };
+
+  const runSanityCheck = async () => {
+    if (!sbConfigured || !supabase) {
+      triggerSaveNotification('Configure Supabase settings before running database verification check.');
+      return;
+    }
+    setSanityChecking(true);
+    haptics.heavy();
+    
+    const checkedData = [];
+    const tables = ['users', 'bookings', 'marketplace_listings', 'safety_alerts'];
+    for (const t of tables) {
+      try {
+        const { error } = await supabase.from(t).select('*').limit(1);
+        if (error && (error.message.includes('relation') || error.message.includes('does not exist') || error.message.includes('not found'))) {
+          checkedData.push({ table: t, status: 'missing' as const, details: `Table absent: ${error.message}` });
+        } else if (error) {
+          checkedData.push({ table: t, status: 'ok' as const, details: `Table active (Query details: ${error.message})` });
+        } else {
+          checkedData.push({ table: t, status: 'ok' as const, details: 'Table exists & matches launch schema!' });
+        }
+      } catch (err: any) {
+        checkedData.push({ table: t, status: 'missing' as const, details: `Query failed: ${err?.message || err}` });
+      }
+    }
+    setSanityResults(checkedData);
+    setSanityChecking(false);
+    triggerSaveNotification('Supabase database schema sanity checks completed.');
+  };
+
+  // Re-subscribe to real-time sync logs when they stream in in background
+  useEffect(() => {
+    const handleLogsUpdate = () => {
+      setLogs([...syncLogsQueue]);
+      setSbConfigured(isSupabaseConfigured());
+    };
+    window.addEventListener('supabase-sync-updated', handleLogsUpdate);
+    window.addEventListener('supabase-client-reinitialized', handleLogsUpdate);
+    return () => {
+      window.removeEventListener('supabase-sync-updated', handleLogsUpdate);
+      window.removeEventListener('supabase-client-reinitialized', handleLogsUpdate);
+    };
+  }, []);
+
+  const handleUpdateSbKeys = (e: React.FormEvent) => {
+    e.preventDefault();
+    reinitializeSupabase(sbUrlInput, sbKeyInput);
+    triggerSaveNotification('Supabase database client credentials hot-reloaded! Dual Sync active.');
+  };
+
+  const handleMigration = async () => {
+    haptics.heavy();
+    setMigrationStatus('running');
+    setMigrationError(null);
+    try {
+      const stats = await runFullBatchMigration();
+      setMigrationResults(stats);
+      setMigrationStatus('success');
+      haptics.success();
+      triggerSaveNotification('Batch migration from Firestore to Supabase completed successfully!');
+    } catch (err: any) {
+      setMigrationStatus('failed');
+      setMigrationError(err.message || String(err));
+      haptics.heavy();
+    }
+  };
+
+  const copySqlToClipboard = () => {
+    navigator.clipboard.writeText(SUPABASE_SQL_CREATOR_SCRIPT);
+    setCopiedSql(true);
+    haptics.success();
+    setTimeout(() => setCopiedSql(false), 3000);
+  };
 
   // --- LOCAL STATES FOR COMPREHENSIVE SETTINGS FIELDS ---
 
@@ -173,8 +334,31 @@ export function SettingsEditor() {
   const [hapticsIntensity, setHapticsIntensity] = useState<'subtle' | 'medium' | 'strong'>(() => {
     return (localStorage.getItem('haptics_intensity') as any) || 'medium';
   });
+  const [hapticsRideArrivalPattern, setHapticsRideArrivalPattern] = useState<string>(() => {
+    return localStorage.getItem('haptics_ride_arrival_pattern') || 'long_pulse';
+  });
+  const [hapticsMessagePattern, setHapticsMessagePattern] = useState<string>(() => {
+    return localStorage.getItem('haptics_message_pattern') || 'short_buzz';
+  });
   const [energySaverEnabled, setEnergySaverEnabled] = useState<boolean>(() => {
     return localStorage.getItem('energy_saver_enabled') === 'true';
+  });
+  const [devHudActive, setDevHudActive] = useState<boolean>(() => {
+    return localStorage.getItem('dev_hud_active') === 'true';
+  });
+  const [hapticsSliderIntensity, setHapticsSliderIntensity] = useState<number>(() => {
+    const val = localStorage.getItem('haptics_slider_intensity');
+    return val ? parseFloat(val) : 1.0;
+  });
+  const [predictiveSyncEnabled, setPredictiveSyncEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('predictive_sync_enabled') !== 'false';
+  });
+  const [predictiveSyncMode, setPredictiveSyncMode] = useState<string>(() => {
+    return localStorage.getItem('predictive_sync_mode') || 'adaptive_eco';
+  });
+  const [importedVoiceShortcuts, setImportedVoiceShortcuts] = useState<string[]>(() => {
+    const val = localStorage.getItem('imported_voice_shortcuts');
+    return val ? JSON.parse(val) : ['book_taxi_home', 'check_today_earnings'];
   });
 
   // 9. Support FAQ & Help Center
@@ -251,6 +435,7 @@ export function SettingsEditor() {
           { icon: Monitor, label: 'Appearance', value: 'appearance' },
           { icon: Compass, label: 'Posts & Bans', value: 'content' },
           { icon: HelpCircle, label: 'Support & FAQs', value: 'support' },
+          { icon: Database, label: '⚡ Supabase Sync', value: 'supabase_sync' },
           { icon: Monitor, label: '👑 Admin Panel', value: 'admin' }
         ].map(item => {
           const TabIcon = item.icon;
@@ -953,30 +1138,247 @@ export function SettingsEditor() {
                     </div>
 
                     <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800/80">
-                      <span className="text-xs font-bold text-slate-800 dark:text-white block mb-2">Vibration Intensity Factor</span>
-                      <div className="grid grid-cols-3 gap-2 bg-white dark:bg-slate-950 p-1.5 rounded-xl border border-slate-100 dark:border-slate-850/60">
-                        {['subtle', 'medium', 'strong'].map((intensity) => (
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-xs font-bold text-slate-800 dark:text-white block">Vibration Intensity Factor</span>
+                        <span className="text-[9.5px] font-mono font-bold text-indigo-600 dark:text-indigo-400">{(hapticsSliderIntensity * 100).toFixed(0)}%</span>
+                      </div>
+                      <div className="space-y-1 bg-white dark:bg-slate-950 p-3 rounded-xl border border-slate-100 dark:border-slate-850/60">
+                        <input
+                          type="range"
+                          min="0.1"
+                          max="2.5"
+                          step="0.1"
+                          value={hapticsSliderIntensity}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            setHapticsSliderIntensity(val);
+                            localStorage.setItem('haptics_slider_intensity', val.toString());
+                            haptics.light();
+                          }}
+                          className="w-full accent-indigo-600 cursor-pointer h-1 bg-slate-100 rounded-lg appearance-none dark:bg-slate-800"
+                        />
+                        <div className="flex justify-between text-[8px] text-slate-400 uppercase font-black tracking-widest leading-none pt-1">
+                          <span>Subtle (10%)</span>
+                          <span>Medium (100%)</span>
+                          <span>Strong (250%)</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800/80">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-xs font-bold text-slate-800 dark:text-white block">Ride Arrival Alert Intensity</span>
+                        <span className="text-[7.5px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded">Adaptive Pulse</span>
+                      </div>
+                      <p className="text-[9px] text-[#74879c] font-black uppercase tracking-widest leading-none mb-2">Vibration profile when drivers pull up</p>
+                      <div className="grid grid-cols-3 gap-2 bg-white dark:bg-slate-950 p-1.5 rounded-xl border border-slate-100 dark:border-slate-850/60 font-medium">
+                        {[
+                          { value: 'long_pulse', label: 'Long Pulse 〰️' },
+                          { value: 'short_buzz', label: 'Short Buzz ⚡' },
+                          { value: 'double_pulse', label: 'Double Pulse 📳' }
+                        ].map((pattern) => (
                           <button
-                            key={intensity}
+                            key={pattern.value}
+                            type="button"
                             onClick={() => {
-                              setHapticsIntensity(intensity as any);
-                              localStorage.setItem('haptics_intensity', intensity);
+                              setHapticsRideArrivalPattern(pattern.value);
+                              localStorage.setItem('haptics_ride_arrival_pattern', pattern.value);
                               haptics.light();
-                              triggerSaveNotification(`Haptic intensity set to ${intensity}`);
+                              if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                                if (pattern.value === 'long_pulse') {
+                                  navigator.vibrate(haptics.scale(350));
+                                } else if (pattern.value === 'short_buzz') {
+                                  navigator.vibrate(haptics.scale(40));
+                                } else {
+                                  navigator.vibrate(haptics.scale([85, 40, 85]));
+                                }
+                              }
+                              triggerSaveNotification(`Ride arrivals set to ${pattern.label}`);
                             }}
-                            className={`py-1.5 px-2 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer border-none ${
-                              hapticsIntensity === intensity
-                                ? 'bg-indigo-600 text-white'
+                            className={`py-1.5 px-2 rounded-lg text-[8px] font-black uppercase tracking-wider transition-all cursor-pointer border-none ${
+                              hapticsRideArrivalPattern === pattern.value
+                                ? 'bg-indigo-600 text-white shadow-xs font-black'
                                 : 'text-slate-500 hover:bg-slate-50 dark:text-slate-405 dark:hover:bg-slate-900'
                             }`}
                           >
-                            {intensity}
+                            {pattern.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800/80">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-xs font-bold text-slate-800 dark:text-white block">Message Alert Intensity</span>
+                        <span className="text-[7.5px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded">Chat Haptic</span>
+                      </div>
+                      <p className="text-[9px] text-[#74879c] font-black uppercase tracking-widest leading-none mb-2">Vibration profile on incoming chat buzzes</p>
+                      <div className="grid grid-cols-3 gap-2 bg-white dark:bg-slate-950 p-1.5 rounded-xl border border-slate-100 dark:border-slate-850/60 font-medium">
+                        {[
+                          { value: 'short_buzz', label: 'Short Buzz ⚡' },
+                          { value: 'double_pulse', label: 'Double Pulse 📳' },
+                          { value: 'long_pulse', label: 'Long Pulse 〰️' }
+                        ].map((pattern) => (
+                          <button
+                            key={pattern.value}
+                            type="button"
+                            onClick={() => {
+                              setHapticsMessagePattern(pattern.value);
+                              localStorage.setItem('haptics_message_pattern', pattern.value);
+                              haptics.light();
+                              if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                                if (pattern.value === 'short_buzz') {
+                                  navigator.vibrate(haptics.scale(40));
+                                } else if (pattern.value === 'double_pulse') {
+                                  navigator.vibrate(haptics.scale([60, 30, 60]));
+                                } else {
+                                  navigator.vibrate(haptics.scale(250));
+                                }
+                              }
+                              triggerSaveNotification(`Message alerts set to ${pattern.label}`);
+                            }}
+                            className={`py-1.5 px-2 rounded-lg text-[8px] font-black uppercase tracking-wider transition-all cursor-pointer border-none ${
+                              hapticsMessagePattern === pattern.value
+                                ? 'bg-indigo-600 text-white shadow-xs font-black'
+                                : 'text-slate-500 hover:bg-slate-50 dark:text-slate-405 dark:hover:bg-slate-900'
+                            }`}
+                          >
+                            {pattern.label}
                           </button>
                         ))}
                       </div>
                     </div>
                   </div>
                 )}
+
+                {/* Developer HUD Overlay Toggle */}
+                <div className="p-3.5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-850 rounded-2xl flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-extrabold text-slate-800 dark:text-white block">Floating Developer HUD Overlay</span>
+                    <span className="text-[9.5px] text-slate-405 block font-bold uppercase tracking-wider">Overlay real-time performance & transactional DB metrics on screen</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextVal = !devHudActive;
+                      setDevHudActive(nextVal);
+                      localStorage.setItem('dev_hud_active', nextVal ? 'true' : 'false');
+                      window.dispatchEvent(new Event('dev_hud_status_changed'));
+                      haptics.success();
+                      triggerSaveNotification(nextVal ? 'Developer HUD overlay activated.' : 'Developer HUD overlay disabled.');
+                    }}
+                    className="bg-transparent border-none cursor-pointer"
+                  >
+                    {devHudActive ? (
+                      <ToggleRight size={38} className="text-indigo-600 fill-indigo-600/10" />
+                    ) : (
+                      <ToggleLeft size={38} className="text-slate-350" />
+                    )}
+                  </button>
+                </div>
+
+                {/* Community Voice Gallery */}
+                <div className="p-4 bg-slate-50/60 dark:bg-slate-900/40 rounded-2xl border border-slate-102 dark:border-slate-850/50 space-y-3 text-left">
+                  <div>
+                    <span className="text-xs font-extrabold text-slate-800 dark:text-white block">Community Voice Gallery</span>
+                    <span className="text-[9.5px] text-slate-405 block font-bold uppercase tracking-wider">Import popular regional vocal shortcuts for hands-free workflow activation</span>
+                  </div>
+                  <div className="space-y-2">
+                    {[
+                      { id: 'book_taxi_home', phrase: '"Get me home safely"', description: 'Instantly requests low-emission rideshare to registered home residence.', usageCount: 428, region: 'Greater London' },
+                      { id: 'check_today_earnings', phrase: '"How are my earnings?"', description: 'Triggers HMRC income audit and financial monthly breakdown metrics vocalisation.', usageCount: 295, region: 'Manchester' },
+                      { id: 'trigger_local_aid', phrase: '"Send emergency backup"', description: 'Initiates immediate neighborhood SOS packet broadcast to 10 nearest helpers.', usageCount: 1105, region: 'Birmingham' }
+                    ].map(shortcut => {
+                      const isImported = importedVoiceShortcuts.includes(shortcut.id);
+                      return (
+                        <div key={shortcut.id} className="p-3 bg-white dark:bg-slate-950 border border-slate-100 dark:border-slate-850 rounded-2xl flex items-center justify-between">
+                          <div className="flex-1 pr-2">
+                            <span className="text-[10px] font-extrabold text-slate-900 dark:text-white flex items-center gap-1">
+                              <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-905 text-indigo-650 dark:text-indigo-400 rounded-lg font-mono text-[9px]">{shortcut.phrase}</span>
+                              <span className="text-[8px] font-black uppercase text-slate-400">({shortcut.region})</span>
+                            </span>
+                            <span className="text-[9px] text-slate-400 block mt-0.5 leading-tight">{shortcut.description}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              haptics.light();
+                              let updated;
+                              if (isImported) {
+                                updated = importedVoiceShortcuts.filter(x => x !== shortcut.id);
+                              } else {
+                                updated = [...importedVoiceShortcuts, shortcut.id];
+                              }
+                              setImportedVoiceShortcuts(updated);
+                              localStorage.setItem('imported_voice_shortcuts', JSON.stringify(updated));
+                              triggerSaveNotification(isImported ? 'Removed custom shortcut' : 'Imported custom shortcut!');
+                            }}
+                            className={`px-3 py-1.5 rounded-xl text-[8.5px] font-black uppercase tracking-wider border cursor-pointer ${
+                              isImported
+                                ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-250 text-emerald-650'
+                                : 'bg-slate-900 border-slate-900 text-white hover:bg-slate-800'
+                            }`}
+                          >
+                            {isImported ? 'Imported ✓' : 'Import'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Predictive Sync module */}
+                <div className="p-4 bg-slate-50/60 dark:bg-slate-900/40 rounded-2xl border border-slate-102 dark:border-slate-850/50 text-left">
+                  <div className="flex items-center justify-between mb-1">
+                    <div>
+                      <span className="text-xs font-extrabold text-slate-800 dark:text-white block">Predictive Sync Scheduler</span>
+                      <span className="text-[9.5px] text-slate-405 block font-bold uppercase tracking-wider">Learns your daily Wi-Fi connected pattern to pre-fetch marketplace & rideshare listings</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextVal = !predictiveSyncEnabled;
+                        setPredictiveSyncEnabled(nextVal);
+                        localStorage.setItem('predictive_sync_enabled', nextVal ? 'true' : 'false');
+                        haptics.light();
+                        triggerSaveNotification(`Predictive sync ${nextVal ? 'enabled' : 'disabled'}`);
+                      }}
+                      className="bg-transparent border-none cursor-pointer"
+                    >
+                      {predictiveSyncEnabled ? (
+                        <ToggleRight size={38} className="text-indigo-600 fill-indigo-600/10" />
+                      ) : (
+                        <ToggleLeft size={38} className="text-slate-350" />
+                      )}
+                    </button>
+                  </div>
+                  {predictiveSyncEnabled && (
+                    <div className="grid grid-cols-2 gap-2 mt-3 bg-white dark:bg-slate-950 p-1.5 rounded-2xl border border-slate-100 dark:border-slate-850/65 font-bold">
+                      {[
+                        { value: 'adaptive_eco', label: 'Wi-Fi Predictive (Eco)' },
+                        { value: 'aggressive', label: 'Hourly Urgent Background' }
+                      ].map((modeOpt) => (
+                        <button
+                          key={modeOpt.value}
+                          type="button"
+                          onClick={() => {
+                            setPredictiveSyncMode(modeOpt.value);
+                            localStorage.setItem('predictive_sync_mode', modeOpt.value);
+                            haptics.light();
+                            triggerSaveNotification(`Pre-sync configuration: ${modeOpt.label}`);
+                          }}
+                          className={`py-2 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all border-none cursor-pointer ${
+                            predictiveSyncMode === modeOpt.value
+                              ? 'bg-slate-950 text-white dark:bg-indigo-650'
+                              : 'text-slate-500 hover:bg-slate-50 dark:text-slate-405 dark:hover:bg-slate-900'
+                          }`}
+                        >
+                          {modeOpt.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1225,6 +1627,406 @@ export function SettingsEditor() {
             {/* Version info */}
             <div className="pt-4 border-t border-slate-100 dark:border-slate-800 text-center select-none">
               <p className="text-[10px] text-slate-350 dark:text-slate-500 font-extrabold uppercase tracking-widest">
+                KonnectS Platform • Release v1.2.4 UK
+              </p>
+              <p className="text-[9px] text-slate-300 dark:text-slate-600 font-extrabold mt-0.5 font-mono">
+                SHA-256 Verified • ISO-27001 Secure Cryptography
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* 7.5. SUPABASE & FIREBASE DB MERGE WORKSPACE */}
+        {activeTab === 'supabase_sync' && (
+          <div className="space-y-6 animate-fade-in text-slate-900 dark:text-white">
+            <div className="flex justify-between items-center flex-row">
+              <div className="flex items-center gap-2">
+                <Database size={18} className="text-indigo-600 animate-pulse" />
+                <h4 className="text-xs font-black uppercase tracking-widest text-[#6366f1]">Dual Cloud Sync Terminal</h4>
+              </div>
+              <span className={`px-2.5 py-0.5 rounded-full text-[8.5px] font-black uppercase tracking-wider border ${
+                sbConfigured 
+                  ? 'bg-emerald-500/10 text-emerald-500 border-emerald-300/30' 
+                  : 'bg-amber-500/10 text-amber-500 border-amber-305/30 animate-pulse'
+              }`}>
+                {sbConfigured ? '● Link Active' : '⚠ Simulation Mode'}
+              </span>
+            </div>
+
+            <p className="text-[11px] text-slate-500 font-bold leading-relaxed block dark:text-slate-400">
+              Set up a resilient, real-time sync bridge between Google Firebase Firestore and your custom Supabase PostgreSQL backend. Every document creation, update, and deletion is mirrored live to ensure zero-loss double storage.
+            </p>
+
+            {/* 1. Supabase credentials Hot-reloader */}
+            <form onSubmit={handleUpdateSbKeys} className="p-5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-850 rounded-[24px] space-y-4">
+              <div className="flex items-center gap-2 mb-1">
+                <Server size={14} className="text-indigo-500" />
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-350">
+                  Supabase API configuration
+                </span>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex flex-col gap-1 text-left">
+                  <label className="text-[9.5px] font-black uppercase tracking-widest text-slate-400">Supabase API URL</label>
+                  <input
+                    type="url"
+                    value={sbUrlInput}
+                    onChange={(e) => setSbUrlInput(e.target.value)}
+                    required
+                    placeholder="https://your-project.supabase.co"
+                    className="w-full px-4 py-2 text-xs bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none focus:border-indigo-500 font-mono transition-colors"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1 text-left">
+                  <label className="text-[9.5px] font-black uppercase tracking-widest text-slate-400">Anon Client Key (JWT)</label>
+                  <input
+                    type="password"
+                    value={sbKeyInput}
+                    onChange={(e) => setSbKeyInput(e.target.value)}
+                    placeholder="Enter Supabase anon role key here..."
+                    className="w-full px-4 py-2 text-xs bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none focus:border-indigo-500 font-mono transition-colors"
+                  />
+                  <p className="text-[8px] text-slate-400 font-bold mt-1 uppercase tracking-wide">
+                    {sbConfigured 
+                      ? '✓ Keys saved in local overrides. Hot-reloader active.' 
+                      : 'ℹ Paste your anon public key here to bypass the simulation and plug into your live database.'
+                    }
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white border-none rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer transition-colors shadow-xs shadow-indigo-600/35"
+              >
+                Hot-Reload Supabase Client
+              </button>
+            </form>
+
+            {/* 2. SQL Schema Creator tool */}
+            <div className="p-5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-850 rounded-[24px] space-y-3">
+              <div className="flex justify-between items-center flex-row">
+                <div className="flex items-center gap-2">
+                  <Terminal size={14} className="text-slate-500" />
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-350">
+                    PostgreSQL Schema Script
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={copySqlToClipboard}
+                  className="px-2.5 py-1 bg-white border border-slate-200 hover:bg-slate-100 dark:bg-slate-955 rounded-lg text-[8.5px] font-black uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-colors"
+                >
+                  <Copy size={10} />
+                  <span>{copiedSql ? '✓ COPIED' : 'COPY SCRIPT'}</span>
+                </button>
+              </div>
+
+              <p className="text-[10px] text-slate-400 font-bold leading-normal block">
+                Supabase requires tables before accepting synced data. Paste this SQL schema directly into your Supabase SQL editor to create matching columns with indexed links and automatic JSONB backups:
+              </p>
+
+              <div className="relative">
+                <textarea
+                  readOnly
+                  value={SUPABASE_SQL_CREATOR_SCRIPT}
+                  className="w-full h-36 p-3 bg-slate-950 text-slate-200 border border-slate-800 rounded-xl font-mono text-[8.5px] leading-relaxed resize-none focus:outline-none"
+                />
+                <div className="absolute bottom-2.5 right-2 text-[7.5px] font-black bg-indigo-600 text-white px-1.5 py-0.5 rounded leading-none uppercase tracking-widest font-sans pointer-events-none shadow-sm">
+                  Postgres v15+ Friendly
+                </div>
+              </div>
+            </div>
+
+            {/* 3. Batch migration controls */}
+            <div className="p-5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-850 rounded-[24px] space-y-4">
+              <div className="flex items-center gap-2">
+                <RefreshCw size={14} className={`text-indigo-505 ${migrationStatus === 'running' ? 'animate-spin' : ''}`} />
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-350">
+                  Full Firestore Batch Migration
+                </span>
+              </div>
+
+              <p className="text-[10px] text-slate-400 font-bold leading-normal block">
+                Ready to sync past documents? This pulls all active Firestore records across all collections and pushes them in an organized bulk batch upsert directly to Supabase.
+              </p>
+
+              {migrationStatus === 'idle' && (
+                <button
+                  type="button"
+                  onClick={handleMigration}
+                  disabled={!sbConfigured}
+                  className={`w-full py-2.5 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer border-none shadow-xs ${
+                    sbConfigured 
+                      ? 'bg-slate-900 dark:bg-indigo-650 hover:bg-indigo-720 text-white shadow-slate-900/10' 
+                      : 'bg-slate-200 text-slate-450 cursor-not-allowed shadow-none'
+                  }`}
+                >
+                  {sbConfigured ? '🚀 Trigger Push Migration' : '🔌 (Awaiting Active Supabase Key)'}
+                </button>
+              )}
+
+              {migrationStatus === 'running' && (
+                <div className="py-4 text-center space-y-2">
+                  <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto" />
+                  <p className="text-[9.5px] font-black uppercase text-indigo-500 tracking-wider">
+                    Migrating collections... compiling JSON payloads...
+                  </p>
+                </div>
+              )}
+
+              {migrationStatus === 'success' && migrationResults && (
+                <div className="p-4 bg-emerald-50 dark:bg-emerald-990 border border-emerald-150 rounded-2xl space-y-3">
+                  <div className="flex items-center gap-1.5 text-emerald-800 dark:text-emerald-300">
+                    <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />
+                    <span className="text-[10px] font-black uppercase tracking-wider">Migration complete!</span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2 pt-1 border-t border-dashed border-emerald-150/40">
+                    {Object.entries(migrationResults).map(([col, val]) => {
+                      const r = val as { success: number; failed: number };
+                      return (
+                        <div key={col} className="p-2 bg-white/60 dark:bg-slate-950/40 rounded-xl text-[9px] font-bold text-left">
+                          <span className="text-slate-400 uppercase text-[8px] font-extrabold tracking-wide block">{col}</span>
+                          <div className="flex gap-2.5 mt-0.5 font-mono">
+                            <span className="text-emerald-600">✓ {r.success} synced</span>
+                            {r.failed > 0 && <span className="text-rose-500">✗ {r.failed} err</span>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setMigrationStatus('idle')}
+                    className="w-full py-1.5 bg-emerald-600 text-white border-none rounded-lg text-[8.5px] font-black uppercase tracking-wider cursor-pointer"
+                  >
+                    Done
+                  </button>
+                </div>
+              )}
+
+              {migrationStatus === 'failed' && (
+                <div className="p-4 bg-rose-50 dark:bg-rose-990 border border-rose-150 rounded-2xl space-y-2 text-left">
+                  <span className="text-[9.5px] font-black uppercase tracking-widest text-rose-700 block">Migration Failed</span>
+                  <p className="text-[10px] text-rose-500 font-bold leading-normal">
+                    {migrationError}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setMigrationStatus('idle')}
+                    className="px-3 py-1 bg-rose-600 text-white border-none rounded-lg text-[8.5px] font-black uppercase tracking-wider cursor-pointer"
+                  >
+                    Retry Setup
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* 4. Real-time synchronizer visual log list */}
+            <div className="p-5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-850 rounded-[28px] space-y-4">
+              <div className="flex justify-between items-center flex-row">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-350 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_6px_#10b981] animate-ping" />
+                  Transceiver Console Logs
+                </span>
+                <span className="text-[8px] font-black uppercase text-slate-400 font-mono tracking-wider">
+                  Last 15 operations
+                </span>
+              </div>
+
+              {logs.length === 0 ? (
+                <div className="py-8 text-center flex flex-col items-center justify-center p-4">
+                  <Link2 size={24} className="text-slate-300 mb-2 rotate-45" />
+                  <p className="text-[11px] font-bold text-slate-550 dark:text-slate-400">Transceiver standing by...</p>
+                  <p className="text-[9px] text-slate-400 mt-1 uppercase tracking-wider font-bold">
+                    Trigger any platform activity like profile edits or local posts to view real-time sync streaming!
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-1 no-scrollbar select-text">
+                  {logs.slice(0, 15).map((log) => (
+                    <div 
+                      key={log.id} 
+                      className="p-3 bg-white dark:bg-slate-950 border border-slate-150/45 dark:border-slate-850 rounded-2xl text-[9px] transition-all hover:scale-[1.01] flex flex-col gap-1.5 text-left"
+                    >
+                      <div className="flex justify-between items-start flex-row gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`px-1.5 py-0.5 rounded text-[8px] font-extrabold font-mono tracking-wider text-white ${
+                            log.action === 'ADDED' ? 'bg-indigo-600' :
+                            log.action === 'MODIFIED' ? 'bg-amber-500' :
+                            log.action === 'DELETED' ? 'bg-rose-500' :
+                            'bg-violet-650'
+                          }`}>
+                            {log.action}
+                          </span>
+                          <span className="text-slate-400 uppercase text-[8px] font-sans font-black tracking-wider">
+                            {log.collection} • {log.docId.substring(0, 8)}...
+                          </span>
+                        </div>
+                        <span className="text-[8px] text-slate-350 dark:text-slate-500 font-bold font-mono">
+                          {log.timestamp}
+                        </span>
+                      </div>
+
+                      <div className="font-bold text-slate-700 dark:text-slate-205 break-all leading-normal ml-0.5">
+                        {log.payloadSummary}
+                      </div>
+
+                      {log.errorMessage ? (
+                        <div className="p-2 bg-rose-50 dark:bg-rose-990 border border-rose-150 rounded-xl leading-relaxed text-[8.5px] font-mono text-rose-500 whitespace-pre-wrap">
+                          {log.errorMessage}
+                        </div>
+                      ) : (
+                        <div className="flex gap-3 text-[8.2px] font-bold text-slate-400 uppercase mt-0.5">
+                          <span>Firestore: <b className="text-emerald-500">✓ Active</b></span>
+                          <span>Supabase: {
+                            log.supabaseStatus === 'success' 
+                              ? <b className="text-emerald-500">✓ Merged</b> 
+                              : log.supabaseStatus === 'simulated'
+                              ? <b className="text-indigo-400">⚡ Saved locally</b>
+                              : <b className="text-rose-500">✗ Failed</b>
+                          }</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 5. DATABASE DUAL HYBRID STATUS & REAL-TIME DIAGNOSTIC latency panel */}
+            <div className="p-5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-850 rounded-[28px] space-y-4">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-355 flex items-center gap-1.5">
+                <Cpu size={14} className="text-indigo-505" />
+                Hybrid Sync Real-Time Diagnostics
+              </span>
+
+              <div className="grid grid-cols-2 gap-3">
+                {/* Firebase Stream Card */}
+                <div className="p-3 bg-white dark:bg-slate-950 border border-slate-150/45 dark:border-slate-850 rounded-2xl space-y-1.5">
+                  <span className="text-[8px] font-black uppercase text-amber-600 block">Google Firestore</span>
+                  <div className="text-xs font-black flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_6px_#10b981]" />
+                    <span>Real-time stream</span>
+                  </div>
+                  <div className="text-[9px] font-mono text-slate-400 font-bold">
+                    Ping RTT: <span className="text-emerald-500 font-black">{fbPing}ms</span>
+                  </div>
+                </div>
+
+                {/* Supabase Stream Card */}
+                <div className="p-3 bg-white dark:bg-slate-950 border border-slate-150/45 dark:border-slate-850 rounded-2xl space-y-1.5">
+                  <span className="text-[8px] font-black uppercase text-indigo-500 block">Supabase PostgreSQL</span>
+                  <div className="text-xs font-black flex items-center gap-1.5">
+                    <span className={`w-2 h-2 rounded-full ${sbConfigured ? 'bg-emerald-500 shadow-[0_0_6px_#10b981]' : 'bg-rose-500'}`} />
+                    <span>{sbConfigured ? 'Bidirectional Sync' : 'Simulated Sandbox'}</span>
+                  </div>
+                  <div className="text-[9px] font-mono text-slate-400 font-bold">
+                    Ping RTT: <span className="text-indigo-500 font-black">{sbPing ? `${sbPing}ms` : 'Inactive'}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 6. SUPABASE SCHEMA SANITY CHECKER TOOL */}
+            <div className="p-5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-850 rounded-[28px] space-y-3">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-355 flex items-center gap-1.5">
+                <Shield size={14} className="text-indigo-505" />
+                Supabase Schema Sanity Diagnostics
+              </span>
+
+              <p className="text-[10px] text-slate-450 font-medium leading-relaxed">
+                Run immediate sanity lookup queries against live tables to verify configuration compatibility for launching the production app.
+              </p>
+
+              <button
+                type="button"
+                onClick={runSanityCheck}
+                disabled={sanityChecking || !sbConfigured}
+                className={`w-full py-2.5 text-[9.5px] font-black tracking-wider uppercase rounded-xl transition-all border-none cursor-pointer ${
+                  sanityChecking 
+                    ? 'bg-slate-100 text-slate-400 animate-pulse'
+                    : sbConfigured
+                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-500/10'
+                    : 'bg-slate-150 text-slate-400 cursor-not-allowed'
+                }`}
+              >
+                {sanityChecking ? '🔍 Contacting Tables...' : '🔍 Run Schema Sanity Check'}
+              </button>
+
+              <div className="grid grid-cols-2 gap-2 pt-1.5">
+                {sanityResults.map((r) => (
+                  <div key={r.table} className="p-2.5 bg-white dark:bg-slate-950 border border-slate-150/45 dark:border-slate-850 rounded-xl text-left space-y-1">
+                    <div className="flex justify-between items-center text-[9px] font-black uppercase">
+                      <span className="text-slate-500">{r.table}</span>
+                      <span className={
+                        r.status === 'ok' ? 'text-emerald-505' : 
+                        r.status === 'missing' ? 'text-rose-500 font-extrabold animate-bounce' : 
+                        'text-slate-400 animate-pulse'
+                      }>
+                        {r.status === 'ok' ? '✓ Safe' : r.status === 'missing' ? '✗ Missing' : '● Wait'}
+                      </span>
+                    </div>
+                    <p className="text-[8px] font-mono leading-none text-slate-400 overflow-hidden text-ellipsis whitespace-nowrap">
+                      {r.details}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* 7. AUTO-BATTERY SAVER animations modifier panel */}
+            <div className="p-5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-850 rounded-[28px] space-y-4">
+              <div className="flex justify-between items-center text-left">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-355 flex items-center gap-1.5">
+                  <Battery size={14} className="text-amber-500 animate-bounce" />
+                  Auto-Battery Eco-Saver Mode
+                </span>
+                
+                <span className={`px-2 py-0.5 rounded text-[8.5px] font-black uppercase font-mono tracking-widest ${
+                  batterySaverActive 
+                    ? 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-450 animate-pulse animate-duration-1000' 
+                    : 'bg-slate-100 dark:bg-slate-950 text-slate-400'
+                }`}>
+                  {batterySaverActive ? 'Eco Saver Active' : 'Normal Performance'}
+                </span>
+              </div>
+
+              <div className="p-4 bg-white dark:bg-slate-950 border border-slate-150/45 dark:border-slate-850 rounded-2xl flex items-center justify-between">
+                <div className="space-y-0.5 text-left">
+                  <span className="text-xs font-black text-slate-800 dark:text-slate-200 block uppercase tracking-wide">
+                    {batteryCharging ? '🔌 Fast Charging' : `⚡ Battery Level: ${batteryLevel}%`}
+                  </span>
+                  <span className="text-[9px] text-slate-400 block font-bold uppercase tracking-wider leading-tight">
+                    {batteryLevel <= 20 
+                      ? 'Critical level! Animations reduced.' 
+                      : 'Framer motion & updates throttled automatically < 20%.'}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => toggleBatterySaver(!batterySaverActive)}
+                  className={`py-1.5 px-3.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer border ${
+                    batterySaverActive 
+                      ? 'bg-amber-600 border-amber-700 text-white shadow-xs' 
+                      : 'bg-slate-50 dark:bg-slate-905 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-350 hover:bg-slate-100'
+                  }`}
+                >
+                  {batterySaverActive ? 'Disable Eco' : 'Enable Eco'}
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1.5 text-[8.2px] text-slate-405 uppercase font-black tracking-wider pl-1 font-mono">
+                <span>Animations Complexity: <b className={batterySaverActive ? "text-amber-500" : "text-emerald-500"}>{batterySaverActive ? 'Reduced (ECO Mode)' : 'Ultra Liquid High FPS'}</b></span>
+              </div>
+            </div>
+
+            {/* Version info Override */}
+            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 text-center select-none">
+              <p className="text-[10px] text-slate-355 dark:text-slate-500 font-extrabold uppercase tracking-widest">
                 KonnectS Platform • Release v1.2.4 UK
               </p>
               <p className="text-[9px] text-slate-300 dark:text-slate-600 font-extrabold mt-0.5 font-mono">

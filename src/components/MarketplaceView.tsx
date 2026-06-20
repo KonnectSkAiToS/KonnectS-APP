@@ -10,6 +10,7 @@ import { haptics } from '../utils/haptics';
 
 import { MarketplaceItemCard } from './MarketplaceItemCard';
 import { Testimonials } from './Testimonials';
+import { LazyImage } from './LazyImage';
 
 export function MarketplaceView() {
   const { user, profile } = useAuth();
@@ -36,7 +37,7 @@ export function MarketplaceView() {
     if (!trimmed) return;
     setSearchHistory(prev => {
       const filtered = prev.filter(x => x.toLowerCase() !== trimmed.toLowerCase());
-      const updated = [trimmed, ...filtered].slice(0, 6);
+      const updated = [trimmed, ...filtered].slice(0, 5);
       localStorage.setItem('konnects_marketplace_searches', JSON.stringify(updated));
       return updated;
     });
@@ -1029,8 +1030,7 @@ export function MarketplaceView() {
                   {cart.map((item) => (
                     <div key={item.id} className="flex gap-4 p-4.5 bg-white border border-slate-100 rounded-[28px] shadow-xs relative">
                       <div className="w-20 h-20 rounded-2xl bg-slate-100 relative overflow-hidden shrink-0">
-                        <img 
-                          referrerPolicy="no-referrer"
+                        <LazyImage 
                           src={item.images?.[0] || 'https://images.unsplash.com/photo-1592078615290-033ee584e267?auto=format&fit=crop&q=80&w=200'} 
                           alt={item.title} 
                           className="w-full h-full object-cover" 

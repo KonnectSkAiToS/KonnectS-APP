@@ -3,10 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Home, ShoppingBag, Briefcase, Car, User } from 'lucide-react';
+import { Home, ShoppingBag, Briefcase, Car, User, ShieldAlert, Cloud } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useState, useEffect } from 'react';
+import { haptics } from '../utils/haptics';
+import { useAuth } from '../contexts/AuthContext';
+import { db } from '../lib/firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 type Tab = 'home' | 'marketplace' | 'services' | 'rides' | 'profile';
 
@@ -17,7 +21,14 @@ interface NavigationProps {
 
 export function Navigation({ activeTab, setActiveTab }: NavigationProps) {
   const { t } = useLanguage();
+  const { profile } = useAuth();
   const [syncStatus, setSyncStatus] = useState<'on' | 'syncing' | 'offline'>('on');
+  
+  // Real-time Cloud Sync & SOS long press states
+  const [hybridSyncActive, setHybridSyncActive] = useState(false);
+  const [isPressingSOS, setIsPressingSOS] = useState(false);
+  const [sosTriggered, setSosTriggered] = useState(false);
+  let sosTimer: any = null;
 
   useEffect(() => {
     const handleOnline = () => {
@@ -41,12 +52,84 @@ export function Navigation({ activeTab, setActiveTab }: NavigationProps) {
     };
     window.addEventListener('sw_sync_started', handleCustomSync);
 
+    // Turn green when hybrid sync starts
+    const handleHybridSync = () => {
+      setHybridSyncActive(true);
+      setTimeout(() => setHybridSyncActive(false), 3500);
+    };
+    window.addEventListener('supabase-sync-updated', handleHybridSync);
+
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('sw_sync_started', handleCustomSync);
+      window.removeEventListener('supabase-sync-updated', handleHybridSync);
     };
   }, []);
+
+  const startSosTimer = (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    haptics.heavy();
+    setIsPressingSOS(true);
+    sosTimer = setTimeout(async () => {
+      haptics.heavy();
+      setSosTriggered(true);
+      setIsPressingSOS(false);
+      
+      let lat = 51.5260;
+      let lng = -0.0780; // defaults Shoreditch
+      
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            lat = pos.coords.latitude;
+            lng = pos.coords.longitude;
+            sendSosToFirestore(lat, lng);
+          },
+          () => {
+            sendSosToFirestore(lat, lng);
+          }
+        );
+      } else {
+        sendSosToFirestore(lat, lng);
+      }
+    }, 1200); // 1.2 seconds long-press
+  };
+
+  const cancelSosTimer = () => {
+    setIsPressingSOS(false);
+    if (sosTimer) clearTimeout(sosTimer);
+  };
+
+  const sendSosToFirestore = async (lat: number, lng: number) => {
+    try {
+      await addDoc(collection(db, 'safety_alerts'), {
+        userId: profile?.uid || 'anonymous',
+        username: profile?.username || 'Guest Neighbor',
+        message: '🚨 One-Tap Emergency SOS long-press triggered from Bottom Navigation!',
+        location: { lat, lng },
+        coordinates: `${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+        status: 'active',
+        timestamp: serverTimestamp()
+      });
+      alert(`🚨 EMERGENCY SOS SENT SUCCESSFULLY!\nCommunity support response services are matching with your coordinates: ${lat.toFixed(5)}, ${lng.toFixed(5)}.`);
+      
+      const sosNotif = new CustomEvent('urbanNet_new_notification', {
+        detail: {
+          id: 'sos-alert-' + Date.now(),
+          type: 'sos',
+          title: '🚨 EMERGENCY ALERT ACTIVE',
+          message: `Shared real-time coordinates ${lat.toFixed(4)}, ${lng.toFixed(4)} with Shoreditch civic response team.`,
+          timestamp: new Date().toLocaleTimeString(),
+          isRead: false
+        }
+      });
+      window.dispatchEvent(sosNotif);
+    } catch(err) {
+      console.warn('Silent safety log fallback:', err);
+      alert(`Emergency SOS Offline Broadcast Simulated: Coordinates coord: ${lat.toFixed(4)}, ${lng.toFixed(4)}.`);
+    }
+  };
 
   const tabs: { id: Tab; icon: any; label: string }[] = [
     { id: 'home', icon: Home, label: t('nav.home') },
@@ -57,9 +140,37 @@ export function Navigation({ activeTab, setActiveTab }: NavigationProps) {
   ];
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 pb-safe z-40">
+    <nav className="fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 pb-safe z-40 select-none">
       <div className="max-w-md mx-auto relative flex justify-around items-center h-16 px-2">
         
+        {/* Subtle Cloud Sync Status Icon */}
+        <div className="absolute top-1.5 left-3 select-none z-50 flex items-center gap-1.5">
+          <Cloud size={13} className={`transition-all duration-500 ${hybridSyncActive ? 'text-emerald-500 scale-125 animate-bounce' : 'text-slate-350 dark:text-slate-600 animate-pulse'}`} />
+          <span className={`text-[7px] font-mono uppercase tracking-widest ${hybridSyncActive ? 'text-emerald-600 font-black' : 'text-slate-400'}`}>
+            {hybridSyncActive ? 'Cloud Synced' : 'Cloud Idle'}
+          </span>
+        </div>
+
+        {/* Quick Emergency SOS Button with Long Press triggers */}
+        <button
+          onMouseDown={startSosTimer}
+          onMouseUp={cancelSosTimer}
+          onMouseLeave={cancelSosTimer}
+          onTouchStart={startSosTimer}
+          onTouchEnd={cancelSosTimer}
+          className={`absolute top-1.5 right-3.5 z-50 text-[9px] font-black uppercase tracking-wider py-1 px-2 rounded-full flex items-center gap-1 transition-all outline-none border cursor-pointer select-none ${
+            isPressingSOS 
+              ? 'bg-red-600 border-red-700 text-white animate-pulse scale-95 ring-2 ring-red-400' 
+              : sosTriggered 
+              ? 'bg-red-700 border-red-800 text-white' 
+              : 'bg-red-50 dark:bg-red-950/40 border-red-200/40 text-red-650 dark:text-red-400 hover:bg-red-500 hover:text-white'
+          }`}
+          title="LONG-PRESS TO TRIGGER EMERGENCY SOS DISPATCH"
+        >
+          <ShieldAlert size={12} className={isPressingSOS ? 'animate-spin' : ''} />
+          <span>{isPressingSOS ? 'Hold...' : sosTriggered ? 'SOS Active' : 'SOS (Hold)'}</span>
+        </button>
+
         {/* Background Cache Sync Status Indicator */}
         <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 select-none pointer-events-none z-50">
           <div className={`px-2 py-0.5 rounded-full border text-[7.5px] font-black uppercase tracking-widest flex items-center space-x-1.5 shadow-sm transition-all duration-300 ${
@@ -88,7 +199,10 @@ export function Navigation({ activeTab, setActiveTab }: NavigationProps) {
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                haptics.light();
+                setActiveTab(tab.id);
+              }}
               className="relative flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors"
               id={`nav-btn-${tab.id}`}
             >
@@ -107,8 +221,8 @@ export function Navigation({ activeTab, setActiveTab }: NavigationProps) {
               </motion.span>
               {isActive && (
                 <motion.div
-                  layoutId="active-nav-indicator"
-                  className="absolute bottom-1 w-1.5 h-1.5 rounded-full bg-brand shadow-sm shadow-brand/40"
+                   layoutId="active-nav-indicator"
+                   className="absolute bottom-1 w-1.5 h-1.5 rounded-full bg-brand shadow-sm shadow-brand/40"
                 />
               )}
             </button>

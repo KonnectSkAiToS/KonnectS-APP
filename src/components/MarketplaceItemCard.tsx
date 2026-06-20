@@ -8,6 +8,7 @@ import { ShoppingBag, ChevronLeft, ChevronRight, Heart, Share2, MapPin, Tag, Sta
 import { motion, AnimatePresence } from 'framer-motion';
 import { LineChart, Line, ResponsiveContainer, Tooltip } from 'recharts';
 import { useAuth } from '../contexts/AuthContext';
+import { LazyImage } from './LazyImage';
 import { collection, query, where, onSnapshot, setDoc, doc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 
@@ -529,7 +530,7 @@ export function MarketplaceItemCard({
             className="w-full h-full"
           >
             {images[currentImg] ? (
-              <img src={images[currentImg]} className="w-full h-full object-cover" alt={item.title} />
+              <LazyImage src={images[currentImg]} alt={item.title} className="w-full h-full object-cover" />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-slate-200">
                 <ShoppingBag size={48} />
@@ -1299,11 +1300,10 @@ export function MarketplaceItemCard({
                               {/* Photo area */}
                               <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-slate-900 border border-slate-800/80 mb-2 flex items-center justify-center">
                                 {snap.itemImage ? (
-                                  <img 
+                                  <LazyImage 
                                     src={snap.itemImage} 
                                     alt={snap.itemTitle} 
                                     className="w-full h-full object-cover opacity-75 group-hover:scale-105 transition-transform duration-500"
-                                    referrerPolicy="no-referrer"
                                   />
                                 ) : (
                                   <ImageIcon size={20} className="text-slate-700" />

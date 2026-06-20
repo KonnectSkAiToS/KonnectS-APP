@@ -37,11 +37,58 @@ export const saveNotifications = (notifs: NotificationItem[]) => {
   }
 };
 
+export const getSnoozeUntil = (): number => {
+  try {
+    const val = localStorage.getItem('urbanNet_notifications_snoozed_until');
+    return val ? parseInt(val, 10) : 0;
+  } catch (e) {
+    return 0;
+  }
+};
+
+export const snoozeNotifications = (minutes: number) => {
+  try {
+    const until = Date.now() + minutes * 60 * 1000;
+    localStorage.setItem('urbanNet_notifications_snoozed_until', until.toString());
+    window.dispatchEvent(new CustomEvent('urbanNet_notifications_snoozed', { detail: { until, minutes } }));
+  } catch (e) {
+    console.error('Error snoozing notifications', e);
+  }
+};
+
+export const isSnoozed = (): boolean => {
+  return Date.now() < getSnoozeUntil();
+};
+
 export const addNotification = (
   type: NotificationItem['type'],
   title: string,
   message: string
 ) => {
+  if (isSnoozed()) {
+    console.log('[NotificationService] Blocked notification due to active alert snooze');
+    return null;
+  }
+
+  // Smart Filters active check: block categories during active Do Not Disturb (DND)
+  const dndEnabled = localStorage.getItem('dnd_enabled') === 'true';
+  if (dndEnabled) {
+    const mutedRaw = localStorage.getItem('dnd_muted_categories') || '';
+    const mutedCats = mutedRaw.split(',').map(s => s.trim());
+    
+    const isRide = type === 'ride' || type === 'booking';
+    const isMarketplace = type === 'order' || type === 'like' || type === 'discount' || type === 'launch' || type === 'search';
+
+    if (isRide && mutedCats.includes('Rides')) {
+      console.log(`[NotificationService] Muted '${type}' notification due to active DND muted rides setting.`);
+      return null;
+    }
+    if (isMarketplace && mutedCats.includes('Marketplace')) {
+      console.log(`[NotificationService] Muted '${type}' notification due to active DND muted marketplace setting.`);
+      return null;
+    }
+  }
+
   const current = getNotifications();
   const newItem: NotificationItem = {
     id: 'notif-' + Date.now() + '-' + Math.random().toString(36).substring(4),

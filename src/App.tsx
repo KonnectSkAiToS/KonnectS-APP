@@ -17,10 +17,12 @@ import { WorkerView } from './components/WorkerView';
 import { GeminiAssistant } from './components/GeminiAssistant';
 import { ChatView } from './components/ChatView';
 import { GlobalVoiceCommand } from './components/GlobalVoiceCommand';
+import { DeveloperHUD } from './components/DeveloperHUD';
 import { motion, AnimatePresence } from 'framer-motion';
-import { startBookingNotificationListener, listenToRideLocalChanges, NotificationItem, startScheduledRideNotificationChecker } from './services/notificationService';
+import { startBookingNotificationListener, listenToRideLocalChanges, NotificationItem, startScheduledRideNotificationChecker, snoozeNotifications } from './services/notificationService';
 import { Bell, AlertCircle, Check } from 'lucide-react';
 import { GuidedTour } from './components/GuidedTour';
+import { startRealtimeDbSync } from './services/dbSyncService';
 
 type Tab = 'home' | 'marketplace' | 'services' | 'rides' | 'profile';
 
@@ -90,11 +92,13 @@ function AppContent() {
     const unsubBookings = startBookingNotificationListener(user.uid);
     const unsubRides = listenToRideLocalChanges();
     const unsubScheduledChecker = startScheduledRideNotificationChecker();
+    const unsubDbSync = startRealtimeDbSync();
 
     return () => {
       unsubBookings();
       unsubRides();
       unsubScheduledChecker();
+      unsubDbSync();
     };
   }, [user]);
 
@@ -115,6 +119,38 @@ function AppContent() {
     return () => {
       window.removeEventListener('urbanNet_new_notification', handleNewNotification);
       if (timer) clearTimeout(timer);
+    };
+  }, []);
+
+  // Setup online/offline transition listeners
+  useEffect(() => {
+    const handleOnline = () => {
+      setToastNotification({
+        id: 'online-toast-' + Date.now(),
+        type: 'info',
+        title: '✓ Connection Restored',
+        message: 'Back online! Real-time synchronization is fully restored.',
+        timestamp: new Date().toLocaleTimeString(),
+        isRead: false
+      });
+    };
+    const handleOffline = () => {
+      setToastNotification({
+        id: 'offline-toast-' + Date.now(),
+        type: 'info',
+        title: '⚠ Network Offline',
+        message: 'You have transitioned to offline mode. Interactive offline capabilities are now active.',
+        timestamp: new Date().toLocaleTimeString(),
+        isRead: false
+      });
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
     };
   }, []);
 
@@ -178,28 +214,57 @@ function AppContent() {
       <Navigation activeTab={activeTab} setActiveTab={setActiveTab} />
       <GeminiAssistant />
       <GlobalVoiceCommand />
+      <DeveloperHUD />
 
       {/* Real-time Global Toast Alert Overlay */}
       <AnimatePresence>
         {toastNotification && (
           <motion.div
+            id="global-toast-overlay"
             initial={{ opacity: 0, y: -50, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -20, scale: 0.95 }}
             transition={{ type: "spring", stiffness: 350, damping: 25 }}
-            className="fixed top-4 left-4 right-4 z-[9999] max-w-md mx-auto p-4 bg-slate-900 border border-indigo-500/30 text-white rounded-3xl shadow-2xl flex items-start space-x-3 cursor-pointer select-none"
+            className="fixed top-4 left-4 right-4 z-[9999] max-w-md mx-auto p-4 bg-slate-900 border border-indigo-500/30 text-white rounded-3xl shadow-2xl flex flex-col space-y-3 cursor-pointer select-none"
             onClick={() => setToastNotification(null)}
           >
-            <div className="p-2 bg-indigo-500/20 text-indigo-400 rounded-2xl shrink-0 mt-0.5">
-              {toastNotification.type === 'booking' ? <Check size={18} /> : <Bell size={18} />}
+            <div className="flex items-start space-x-3 w-full">
+              <div className="p-2 bg-indigo-500/20 text-indigo-400 rounded-2xl shrink-0 mt-0.5">
+                {toastNotification.type === 'booking' ? <Check size={18} /> : <Bell size={18} />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <h4 className="text-xs font-black uppercase tracking-wider text-indigo-300">
+                  {toastNotification.title}
+                </h4>
+                <p className="text-[11px] text-slate-350 leading-relaxed font-bold mt-0.5">
+                  {toastNotification.message}
+                </p>
+              </div>
             </div>
-            <div className="flex-1 min-w-0">
-              <h4 className="text-xs font-black uppercase tracking-wider text-indigo-300">
-                {toastNotification.title}
-              </h4>
-              <p className="text-[11px] text-slate-350 leading-relaxed font-bold mt-0.5">
-                {toastNotification.message}
-              </p>
+
+            {/* Snooze action shortcuts */}
+            <div className="flex items-center justify-between border-t border-slate-800/80 pt-2 w-full flex-row" onClick={(e) => e.stopPropagation()}>
+              <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">Snooze alerts:</span>
+              <div className="flex items-center space-x-1.5 flex-row">
+                {[15, 30, 60].map((mins) => (
+                  <button
+                    key={mins}
+                    id={`snooze-btn-${mins}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      snoozeNotifications(mins);
+                      setToastNotification(null);
+                      // Trigger tactile vibration
+                      if (navigator.vibrate) {
+                        navigator.vibrate([35]);
+                      }
+                    }}
+                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border-none rounded-lg text-[9px] font-extrabold uppercase cursor-pointer transition-colors"
+                  >
+                    {mins}m
+                  </button>
+                ))}
+              </div>
             </div>
           </motion.div>
         )}

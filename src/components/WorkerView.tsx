@@ -250,33 +250,65 @@ export function WorkerView({ onChat }: { onChat: (id: string, name: string) => v
   useEffect(() => {
     if (!profile?.uid) return;
 
-    // Synchronize CRM Reminders
-    const crmQ = query(
-      collection(db, 'contractor_crm'),
-      where('contractorId', '==', profile.uid)
-    );
-    const unsubCrm = onSnapshot(crmQ, (snap) => {
-      const items = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setCrmRemindersList(items);
-    }, (err) => {
-      console.error("Failed to fetch CRM records", err);
-    });
+    let unsubCrm: (() => void) | null = null;
+    let unsubHmrc: (() => void) | null = null;
+    let crmRetryTimeout: any = null;
+    let hmrcRetryTimeout: any = null;
+    let crmRetryCount = 0;
+    let hmrcRetryCount = 0;
 
-    // Synchronize HMRC Mileage & Expense logs
-    const hmrcQ = query(
-      collection(db, 'hmrc_logs'),
-      where('workerId', '==', profile.uid)
-    );
-    const unsubHmrc = onSnapshot(hmrcQ, (snap) => {
-      const items = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setHmrcLogs(items);
-    }, (err) => {
-      console.error("Failed to fetch HMRC logs", err);
-    });
+    function subscribeCrm() {
+      if (unsubCrm) {
+        unsubCrm();
+        unsubCrm = null;
+      }
+      const crmQ = query(
+        collection(db, 'contractor_crm'),
+        where('contractorId', '==', profile.uid)
+      );
+      unsubCrm = onSnapshot(crmQ, (snap) => {
+        const items = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setCrmRemindersList(items);
+        crmRetryCount = 0;
+      }, (err) => {
+        console.error("Failed to fetch CRM records", err);
+        if (crmRetryCount < 3) {
+          crmRetryCount++;
+          crmRetryTimeout = setTimeout(subscribeCrm, 1500 * crmRetryCount);
+        }
+      });
+    }
+
+    function subscribeHmrc() {
+      if (unsubHmrc) {
+        unsubHmrc();
+        unsubHmrc = null;
+      }
+      const hmrcQ = query(
+        collection(db, 'hmrc_logs'),
+        where('workerId', '==', profile.uid)
+      );
+      unsubHmrc = onSnapshot(hmrcQ, (snap) => {
+        const items = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setHmrcLogs(items);
+        hmrcRetryCount = 0;
+      }, (err) => {
+        console.error("Failed to fetch HMRC logs", err);
+        if (hmrcRetryCount < 3) {
+          hmrcRetryCount++;
+          hmrcRetryTimeout = setTimeout(subscribeHmrc, 1500 * hmrcRetryCount);
+        }
+      });
+    }
+
+    subscribeCrm();
+    subscribeHmrc();
 
     return () => {
-      unsubCrm();
-      unsubHmrc();
+      if (unsubCrm) unsubCrm();
+      if (unsubHmrc) unsubHmrc();
+      if (crmRetryTimeout) clearTimeout(crmRetryTimeout);
+      if (hmrcRetryTimeout) clearTimeout(hmrcRetryTimeout);
     };
   }, [profile?.uid]);
 

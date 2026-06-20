@@ -14,7 +14,7 @@ import { haptics } from '../utils/haptics';
 type AuthMode = 'login' | 'signup' | 'forgot' | 'forgot-success' | 'find-account' | 'results' | 'verify-account';
 
 export function LoginView() {
-  const { signIn, emailSignIn, emailSignUp, resetPassword } = useAuth();
+  const { signIn, simulateOAuthSignIn, emailSignIn, emailSignUp, resetPassword } = useAuth();
   const [mode, setMode] = useState<AuthMode>('login');
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -336,14 +336,37 @@ export function LoginView() {
                       <p className="text-rose-600 text-[10px] font-black uppercase tracking-widest leading-relaxed">Identity Check</p>
                       <p className="text-rose-500 text-[11px] font-bold leading-tight mt-0.5">{error}</p>
                       {(error.includes('DISABLED') || error.includes('auth/operation-not-allowed')) && (
-                        <a 
-                          href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/providers`} 
-                          target="_blank" 
-                          referrerPolicy="no-referrer"
-                          className="mt-3 block w-full py-3 bg-brand text-white text-center rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-brand/20 active:scale-95 transition-all"
-                        >
-                          Enable In Console →
-                        </a>
+                        <div className="space-y-2 mt-3">
+                          <a 
+                            href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/providers`} 
+                            target="_blank" 
+                            referrerPolicy="no-referrer"
+                            className="block w-full py-3 bg-brand text-white text-center rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-brand/20 active:scale-95 transition-all decoration-none"
+                          >
+                            Enable In Console →
+                          </a>
+                          {(error.toLowerCase().includes('apple') || error.toLowerCase().includes('microsoft')) && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                setLoading(true);
+                                setError(null);
+                                try {
+                                  const simulatedProvider = error.toLowerCase().includes('apple') ? 'apple' : 'microsoft';
+                                  await simulateOAuthSignIn(simulatedProvider);
+                                  haptics.success();
+                                } catch (simErr: any) {
+                                  setError(`Simulated sign-in failed: ${simErr.message || simErr}`);
+                                } finally {
+                                  setLoading(false);
+                                }
+                              }}
+                              className="block w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-center rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-indigo-600/20 active:scale-95 transition-all cursor-pointer border-none"
+                            >
+                              🤖 Bypass & Simulate OAuth Login
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
                   </motion.div>
@@ -454,15 +477,14 @@ export function LoginView() {
                   className="mt-0.5 accent-brand cursor-pointer shrink-0"
                 />
                 <label htmlFor="agreeTerms" className="text-[10px] font-bold text-slate-500 leading-normal select-none">
-                  I agree to the{' '}
+                  I agree that this app is strictly for communication purposes, with all ultimate decisions, actions, and conduct decided entirely by individual users. I accept the{' '}
                   <button
                     type="button"
                     onClick={() => setShowTermsModal(true)}
-                    className="text-brand hover:underline font-extrabold"
+                    className="text-brand hover:underline font-extrabold text-blue-600 dark:text-blue-400"
                   >
-                    Regional Privacy Terms
-                  </button>{' '}
-                  (including 1-year government retention and 60-day recovery policy).
+                    Terms & Privacy Policy
+                  </button>.
                 </label>
               </div>
 
@@ -479,14 +501,37 @@ export function LoginView() {
                       <p className="text-rose-600 text-[10px] font-black uppercase tracking-widest leading-relaxed">Form Issue</p>
                       <p className="text-rose-500 text-[11px] font-bold leading-tight mt-0.5">{error}</p>
                       {(error.includes('DISABLED') || error.includes('auth/operation-not-allowed')) && (
-                        <a 
-                          href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/providers`} 
-                          target="_blank" 
-                          referrerPolicy="no-referrer"
-                          className="mt-3 block w-full py-3 bg-brand text-white text-center rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-brand/20 active:scale-95 transition-all"
-                        >
-                          Enable In Console →
-                        </a>
+                        <div className="space-y-2 mt-3">
+                          <a 
+                            href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/providers`} 
+                            target="_blank" 
+                            referrerPolicy="no-referrer"
+                            className="block w-full py-3 bg-brand text-white text-center rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-brand/20 active:scale-95 transition-all decoration-none"
+                          >
+                            Enable In Console →
+                          </a>
+                          {(error.toLowerCase().includes('apple') || error.toLowerCase().includes('microsoft')) && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                setLoading(true);
+                                setError(null);
+                                try {
+                                  const simulatedProvider = error.toLowerCase().includes('apple') ? 'apple' : 'microsoft';
+                                  await simulateOAuthSignIn(simulatedProvider);
+                                  haptics.success();
+                                } catch (simErr: any) {
+                                  setError(`Simulated sign-in failed: ${simErr.message || simErr}`);
+                                } finally {
+                                  setLoading(false);
+                                }
+                              }}
+                              className="block w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-center rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-indigo-600/20 active:scale-95 transition-all cursor-pointer border-none"
+                            >
+                              🤖 Bypass & Simulate OAuth Login
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
                   </motion.div>
@@ -824,6 +869,15 @@ export function LoginView() {
                   <h4 className="font-extrabold text-[#1e1b4b] dark:text-indigo-400 uppercase tracking-wider text-[10px] mb-1">3. Permanent Username Lock-out</h4>
                   <p>
                     If the 60-day deactivation period passes without recovery, the profile is permanently retired. For fraud protection and security, the unique username associated with the retired profile becomes **permanently locked**. No new user will ever be permitted to register using that locked username.
+                  </p>
+                </div>
+
+                <div className="p-3.5 bg-blue-50/50 border border-blue-100 dark:bg-blue-950/20 dark:border-blue-900 rounded-2xl">
+                  <h4 className="font-extrabold text-blue-900 dark:text-blue-400 uppercase tracking-wider text-[10px] mb-1 flex items-center gap-1">
+                    <Info size={12} /> 4. Communication & User Decision Autonomy
+                  </h4>
+                  <p className="text-[11px] text-blue-800 dark:text-blue-300 leading-normal font-medium">
+                    This software is provided <strong>strictly and exclusively as a communication medium</strong>. Any and all other interactions, transactions, plans, commutes, agreements, work requests, or peer-to-peer activities are decided and structured <strong>exclusively by individual users</strong> on an independent basis. Each user has full self-determination to decide what to do or what not to do under their own subjective criteria and responsibility.
                   </p>
                 </div>
               </div>

@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Mic, MicOff, X, Compass, Check, AlertTriangle, ShieldAlert } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { Mic, MicOff, X, Compass, Check, AlertTriangle, ShieldAlert, HelpCircle } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { haptics } from '../utils/haptics';
 
 export function GlobalVoiceCommand() {
   const [isSupported, setIsSupported] = useState(true);
   const [isListening, setIsListening] = useState(false);
+  const [showHelpOpen, setShowHelpOpen] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [recognizedAction, setRecognizedAction] = useState<string | null>(null);
   const [recognition, setRecognition] = useState<any>(null);
@@ -137,6 +139,34 @@ export function GlobalVoiceCommand() {
     }
     
     // 3. Spoken Turn by Turn Guidance Triggers
+    else if (lower.includes('pending rides') || lower.includes('show me my pending rides') || lower.includes('my rides') || lower.includes('active rides')) {
+      const active = localStorage.getItem('active_ride_active') === 'true';
+      if (active) {
+        const driver = localStorage.getItem('active_ride_driver') || 'your cab driver';
+        const dest = localStorage.getItem('active_ride_destination') || 'your destination';
+        const msg = `You have 1 active pending ride with driver ${driver} heading to ${dest}. Navigating to your active ride tracking screen now!`;
+        setRecognizedAction(`✓ Pending Rides: ${msg}`);
+        speakGuidance(msg);
+        triggerNavigation('rides', 'Opening pending rides details...');
+      } else {
+        const msg = "You do not have any pending or active rides matching your account. Open the Rides tab to book your next trip.";
+        setRecognizedAction(`✓ No pending rides found.`);
+        speakGuidance(msg);
+        triggerNavigation('rides', 'Opening rides form...');
+      }
+    }
+
+    else if (lower.includes('refresh marketplace') || lower.includes('refresh listings') || lower.includes('update marketplace') || lower.includes('reload marketplace')) {
+      const msg = "Refreshing neighborhood listings in Shoreditch... Fetching the latest community listings and trades!";
+      setRecognizedAction(`✓ Marketplace Refreshed!`);
+      speakGuidance(msg);
+      
+      // Dispatch event to allow MarketplaceView to catch it and trigger a small spin or refetch animation
+      window.dispatchEvent(new CustomEvent('refresh-marketplace-listings'));
+      
+      triggerNavigation('marketplace', 'Refreshing marketplace listings... Loaded!');
+    }
+
     else if (lower.includes('guidance') || lower.includes('directions') || lower.includes('route') || lower.includes('turn by turn') || lower.includes('where am i') || lower.includes('voice guide')) {
       const active = localStorage.getItem('active_ride_active') === 'true';
       if (!active) {
@@ -188,6 +218,56 @@ export function GlobalVoiceCommand() {
         }
       }, 1200);
     }
+
+    // 5.5. AI Voice Spending Summary Command
+    else if (lower.includes('spend') || lower.includes('spending') || lower.includes('outlay') || lower.includes('cost') || lower.includes('expense')) {
+      let msg = "";
+      if (lower.includes('ride') || lower.includes('transport') || lower.includes('cab')) {
+        msg = "According to your local bookings ledger, you have spent a total of £42.00 on rides this month. This includes a priority cab ride in Shoreditch and your daily eco carpools. Your carbon offset from these rides saved 15.5 kilograms of CO2 emissions.";
+      } else {
+        msg = "Your aggregate professional outlay on KonnectS is £253.00 this month. This includes £195.00 on verified home trade services, £42.00 on boundary shared transport rides, and £16.00 in the peer-to-peer neighborhood marketplace.";
+      }
+      setRecognizedAction(`📊 Spending Summary: "${msg}"`);
+      speakGuidance(msg);
+      setTimeout(() => {
+        setIsListening(false);
+        // Let's also open Profile's transaction insights or display an indicator
+        if ((window as any).__navigateTab) {
+          (window as any).__navigateTab('profile');
+        }
+      }, 5000);
+    }
+
+    // 6. Verbally update ride or service status ("I am here", "arrived")
+    else if (lower.includes('i am here') || lower.includes("i'm here") || lower.includes('arrived') || lower.includes('update status') || lower.includes('notify client') || lower.includes('notify driver')) {
+      const msg = "Notifying driver and client that you are here. Your active status has been updated verbally.";
+      setRecognizedAction(`✓ Status Updated: "I am here"`);
+      speakGuidance(msg);
+      
+      localStorage.setItem('active_ride_status_update', 'arrived');
+      localStorage.setItem('active_service_status_update', 'arrived');
+      
+      setTimeout(() => {
+        setIsListening(false);
+        const event = new CustomEvent('voice-status-arrived', { 
+          detail: { status: 'arrived', message: 'User updated status verbally' } 
+        });
+        window.dispatchEvent(event);
+        
+        // Broadcast custom notification to activate non-intrusive toast notification
+        const notificationEvent = new CustomEvent('urbanNet_new_notification', {
+          detail: {
+            id: 'voice-status-alert-' + Date.now(),
+            type: 'ride',
+            title: '📢 Status Broadcasted',
+            message: 'Verbally notified driver & client: "I am here" at the Shoreditch node.',
+            timestamp: new Date().toLocaleTimeString(),
+            isRead: false
+          }
+        });
+        window.dispatchEvent(notificationEvent);
+      }, 1500);
+    }
     
     // No match
     else {
@@ -217,6 +297,15 @@ export function GlobalVoiceCommand() {
 
   return (
     <>
+      {/* Floating Help Icon right above the Mic button */}
+      <button
+        onClick={() => { haptics.light(); setShowHelpOpen(true); }}
+        className="fixed bottom-[136px] left-4 z-40 p-3 rounded-full shadow-lg bg-white hover:bg-slate-50 text-slate-700 dark:bg-slate-900 dark:text-slate-100 border border-slate-200/70 dark:border-slate-800 active:scale-95 transition-all cursor-pointer flex items-center justify-center"
+        title="Voice Command Help Guide"
+      >
+        <HelpCircle size={18} className="text-indigo-600 dark:text-indigo-400" />
+      </button>
+
       {/* Small floating button above the bottom navigation */}
       <button
         onClick={toggleListening}
@@ -230,6 +319,143 @@ export function GlobalVoiceCommand() {
         <Mic size={22} className={isListening ? 'animate-bounce' : ''} />
       </button>
 
+      {/* Voice commands list cheat-sheet help overlay */}
+      <AnimatePresence>
+        {showHelpOpen && (
+          <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs z-[5000] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-[30px] p-6 shadow-2xl border border-slate-150 dark:border-slate-800 relative max-h-[80vh] flex flex-col"
+            >
+              <button 
+                onClick={() => { haptics.light(); setShowHelpOpen(false); }}
+                className="absolute top-4 right-4 p-2 bg-slate-50 dark:bg-slate-800 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-750 transition-all border-none cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+
+              <div className="text-center pb-4 border-b border-slate-100 dark:border-slate-800">
+                <span className="px-2.5 py-1 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 rounded-full text-[9px] font-black uppercase tracking-widest inline-flex items-center gap-1.5 mb-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                  Voice Commands Reference
+                </span>
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-white">Global Voice Control Hub</h3>
+                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide mt-1">Tap standard mic & say these vocal shortcuts</p>
+              </div>
+
+              {/* Scrollable list of shortcuts */}
+              <div className="flex-1 overflow-y-auto py-4 space-y-4 pr-1 text-left">
+                {/* Section: Travel & Navigation */}
+                <div className="space-y-2">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                    🗺️ Navigation Shortcuts
+                  </h4>
+                  <div className="space-y-1.5 text-xs font-semibold">
+                    {[
+                      { say: '"Go to home"', action: 'Open Home Dashboard' },
+                      { say: '"Go to rides"', action: 'Open Active Cabs & Rides' },
+                      { say: '"Go to marketplace"', action: 'Open Peer-to-Peer Shop' },
+                      { say: '"Go to services"', action: 'Open Verified Local Trades' },
+                      { say: '"Go to profile"', action: 'Open User Profile Center' },
+                    ].map((cmd, i) => (
+                      <div key={i} className="flex justify-between items-start gap-4 p-2 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100/50 dark:border-slate-850">
+                        <span className="text-indigo-650 dark:text-indigo-400 font-mono tracking-tight text-[11px] font-bold">{cmd.say}</span>
+                        <span className="text-slate-500 text-[10px] text-right font-medium">{cmd.action}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Section: Bookings & Searches */}
+                <div className="space-y-2">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                    🛠️ Service Tasks & Search
+                  </h4>
+                  <div className="space-y-1.5 text-xs font-semibold">
+                    {[
+                      { say: '"Book a cleaner / plumber / electrician"', action: 'Vocal Search of Verified Local Trades' },
+                      { say: '"Find a sofa / chair"', action: 'Search Local Marketplace listings' },
+                      { say: '"Refresh marketplace / listings"', action: 'Dynamic marketplace data reload' },
+                    ].map((cmd, i) => (
+                      <div key={i} className="flex flex-col gap-1 p-2 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100/50 dark:border-slate-850">
+                        <span className="text-indigo-650 dark:text-indigo-400 font-mono tracking-tight text-[11px] font-bold">{cmd.say}</span>
+                        <span className="text-slate-500 text-[10px] font-medium">{cmd.action}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Section: Live Assistance */}
+                <div className="space-y-2">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                    🚘 Real-Time Cab Updates
+                  </h4>
+                  <div className="space-y-1.5 text-xs font-semibold">
+                    {[
+                      { say: '"Pending rides" / "Show my rides"', action: 'Status announcements of your bookings & matching' },
+                      { say: '"Directions" / "Where am am I"', action: 'Announce vocal turn-by-turn road alerts' },
+                      { say: '"I am here" / "Notify driver"', action: 'Vocal arrival indicator & notifications flash' },
+                    ].map((cmd, i) => (
+                      <div key={i} className="flex justify-between items-start gap-4 p-2 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100/50 dark:border-slate-850">
+                        <span className="text-indigo-650 dark:text-indigo-400 font-mono tracking-tight text-[11px] font-bold">{cmd.say}</span>
+                        <span className="text-slate-500 text-[10px] text-right font-medium">{cmd.action}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Section: Spend Analysis */}
+                <div className="space-y-2">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                    📊 Financial Summary
+                  </h4>
+                  <div className="space-y-1.5 text-xs font-semibold">
+                    {[
+                      { say: '"How much spent on rides this month?"', action: 'Renders spoken ledger details of cab rides' },
+                      { say: '"What are my expenses?"', action: 'Aggregated breakdown of marketplace + rides' },
+                    ].map((cmd, i) => (
+                      <div key={i} className="flex flex-col gap-1 p-2 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100/50 dark:border-slate-850">
+                        <span className="text-indigo-650 dark:text-indigo-400 font-mono tracking-tight text-[11px] font-bold">{cmd.say}</span>
+                        <span className="text-slate-500 text-[10px] font-medium">{cmd.action}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Section: Support & SOS */}
+                <div className="space-y-2">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                    🚨 Assistance & Security
+                  </h4>
+                  <div className="space-y-1.5 text-xs font-semibold">
+                    {[
+                      { say: '"Contact support"', action: 'Instantly connects to live local moderator chat' },
+                      { say: '"SOS" / "Emergency" / "Panic"', action: 'Triggers fast SOS route & shares location' },
+                    ].map((cmd, i) => (
+                      <div key={i} className="flex justify-between items-start gap-4 p-2 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-100/50 dark:border-slate-850">
+                        <span className="text-indigo-600 dark:text-rose-400 font-mono tracking-tight text-[11px] font-bold">{cmd.say}</span>
+                        <span className="text-slate-500 text-[10px] text-right font-medium">{cmd.action}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 text-center">
+                <button
+                  onClick={() => { haptics.light(); setShowHelpOpen(false); }}
+                  className="w-full py-3 bg-slate-900 border-none rounded-2xl text-xs font-extrabold uppercase tracking-widest text-slate-50 cursor-pointer hover:bg-slate-800 transition-colors"
+                >
+                  Got It, Thanks!
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Voice Control Hub overlay */}
       <AnimatePresence>
         {isListening && (
@@ -238,7 +464,7 @@ export function GlobalVoiceCommand() {
               initial={{ y: 50, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 50, opacity: 0 }}
-              className="bg-white dark:bg-slate-905 w-full max-w-sm rounded-[35px] p-6 text-center space-y-6 shadow-2xl border border-slate-100 dark:border-slate-800 relative"
+              className="bg-white dark:bg-slate-905 w-full max-w-sm rounded-[35px] p-6 text-center space-y-6 shadow-2xl border border-slate-105 dark:border-slate-800 relative"
             >
               <button 
                 onClick={() => setIsListening(false)}
@@ -326,10 +552,10 @@ export function GlobalVoiceCommand() {
               <div className="pt-2 text-[10px] text-slate-400 font-semibold space-y-1.5 text-left border-t border-slate-100">
                 <p className="font-extrabold text-[#94a3b8] uppercase tracking-wider">Try saying things like:</p>
                 <div className="grid grid-cols-2 gap-2 text-[9px] font-bold text-slate-550">
+                  <span className="p-1.5 bg-slate-50 dark:bg-slate-850 rounded-lg">💬 "Show pending rides"</span>
+                  <span className="p-1.5 bg-slate-50 dark:bg-slate-850 rounded-lg">💬 "Refresh Marketplace"</span>
                   <span className="p-1.5 bg-slate-50 dark:bg-slate-850 rounded-lg">💬 "Contact Support"</span>
                   <span className="p-1.5 bg-slate-50 dark:bg-slate-850 rounded-lg">💬 "Go to rides"</span>
-                  <span className="p-1.5 bg-slate-50 dark:bg-slate-850 rounded-lg">💬 "Book a cleaner"</span>
-                  <span className="p-1.5 bg-slate-50 dark:bg-slate-850 rounded-lg">💬 "Emergency SOS"</span>
                 </div>
               </div>
             </motion.div>

@@ -8,12 +8,137 @@ import { onAuthStateChanged, User, signInWithPopup, signOut, createUserWithEmail
 import { doc, getDoc, setDoc, serverTimestamp, onSnapshot, query, collection, where, getDocs } from 'firebase/firestore';
 import { auth, db, googleProvider, handleFirestoreError, OperationType } from '../lib/firebase';
 import { UserProfile } from '../types';
+import { isSupabaseConfigured, supabase } from '../lib/supabase';
+
+// Helper to push user changes to Supabase
+export async function syncProfileToSupabase(profileData: UserProfile) {
+  if (!isSupabaseConfigured() || !supabase) return;
+  try {
+    const { error: upsertErr } = await supabase.from('users').upsert({
+      uid: profileData.uid,
+      email: profileData.email,
+      username: profileData.username || 'User',
+      rewards_points: Number(profileData.rewardsPoints || 0),
+      carbon_savings_kg: Number(profileData.carbonSavingsKg || 0),
+      is_worker: Boolean(profileData.isWorker),
+      created_at: new Date().toISOString(),
+      raw_data: profileData
+    } as any);
+
+    if (upsertErr) {
+      console.warn('[Dual DB Sync] Supabase profile sync error:', upsertErr.message);
+    } else {
+      console.log('[Dual DB Sync] Supabase users table updated in real-time');
+    }
+  } catch (error) {
+    console.error('[Dual DB Sync] Supabase profile Sync exception:', error);
+  }
+}
+
+// Dual Session authentications helper
+export async function ensureDualAuthSession(email: string, uid: string) {
+  if (!isSupabaseConfigured() || !supabase) return;
+  const password = 'dualSecurePass_@@' + uid;
+  try {
+    // Attempt dual auth log in
+    const { error: signInErr } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    
+    // If user does not exist yet, sign them up
+    if (signInErr && (signInErr.message.includes('Invalid login credentials') || signInErr.message.includes('Email not confirmed') || signInErr.message.includes('not found') || signInErr.status === 400)) {
+      const { error: signUpErr } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            uid,
+            displayName: email.split('@')[0],
+          }
+        }
+      });
+      if (!signUpErr) {
+        console.log('[Dual Auth] Seamlessly registered matching account on Supabase Auth platform.');
+        // Sign in immediately
+        await supabase.auth.signInWithPassword({ email, password });
+      }
+    } else if (!signInErr) {
+      console.log('[Dual Auth] Authenticated flawlessly to Supabase Auth. Dual identities aligned.');
+    }
+  } catch (err) {
+    console.warn('[Dual Auth] Non-blocking exception during dual-authentication routine:', err);
+  }
+}
+
+// Local cache migration utility helper
+export async function migrateLocalCacheToSupabase(uid: string) {
+  if (!isSupabaseConfigured() || !supabase) return;
+  const migrationDoneKey = `supabase_cache_migration_done_${uid}`;
+  if (localStorage.getItem(migrationDoneKey) === 'true') return;
+
+  console.log('[Migration System] First-time login detected. Migrating local cache to Supabase PostgreSQL...');
+  
+  try {
+    // 1. Assists & Rewards Points migration
+    const assistCount = Number(localStorage.getItem('user_local_assists_count') || '16');
+    const savedLaborCredits = Number(localStorage.getItem('saved_labor_credits') || '0');
+    
+    // 2. Scheduled Rides migration
+    const localRidesRaw = localStorage.getItem('konnects_scheduled_rides');
+    if (localRidesRaw) {
+      const localRides = JSON.parse(localRidesRaw);
+      if (Array.isArray(localRides) && localRides.length > 0) {
+        for (const ride of localRides) {
+          const { error } = await supabase.from('bookings').upsert({
+            id: ride.id || `ride-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+            service_type: 'ride-share',
+            user_id: uid,
+            driver_name: ride.driverName || 'Cab Driver',
+            status: ride.status || 'scheduled',
+            price: Number(ride.price || 15.00),
+            created_at: ride.createdAt || new Date().toISOString(),
+            raw_data: ride
+          } as any);
+          if (error) console.warn('[Migration Warning] Sync scheduled ride failure:', error.message);
+        }
+      }
+    }
+
+    // 3. Local task/service bookings cache migration
+    const localTasksRaw = localStorage.getItem(`konnects_pending_tasks_cache_${uid}`);
+    if (localTasksRaw) {
+      const localTasks = JSON.parse(localTasksRaw);
+      if (Array.isArray(localTasks) && localTasks.length > 0) {
+        for (const task of localTasks) {
+          const { error } = await supabase.from('bookings').upsert({
+            id: task.id || `service-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+            service_type: task.serviceType || 'verified-service',
+            user_id: uid,
+            status: task.status || 'pending',
+            price: Number(task.price || 25.0),
+            created_at: task.createdAt || new Date().toISOString(),
+            raw_data: task
+          } as any);
+          if (error) console.warn('[Migration Warning] Sync task booking failure:', error.message);
+        }
+      }
+    }
+
+    // Finished
+    localStorage.setItem(migrationDoneKey, 'true');
+    console.log('[Migration System] Hybrid database cache migration completed.');
+  } catch (err) {
+    console.error('[Migration System] Error in cache migration routine:', err);
+  }
+}
 
 interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
   loading: boolean;
   signIn: (provider?: 'google' | 'apple' | 'microsoft') => Promise<void>;
+  simulateOAuthSignIn: (providerName: 'apple' | 'microsoft') => Promise<void>;
   emailSignIn: (email: string, pass: string) => Promise<void>;
   emailSignUp: (data: Partial<UserProfile>, pass: string) => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
@@ -26,6 +151,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Sync profile details to Supabase upon any local update or change
+  useEffect(() => {
+    if (profile) {
+      syncProfileToSupabase(profile);
+    }
+  }, [profile]);
+
+  // Handle seamless dual auth session registration and automatic cache migration
+  useEffect(() => {
+    if (user) {
+      ensureDualAuthSession(user.email || '', user.uid);
+      migrateLocalCacheToSupabase(user.uid);
+    }
+  }, [user]);
 
   useEffect(() => {
     let unsubscribeProfile: (() => void) | undefined;
@@ -44,11 +184,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               uid: user.uid,
               email: user.email || '',
               username: user.displayName || user.email?.split('@')[0] || 'User',
-              rewardsPoints: 120,
+              rewardsPoints: 0,
               referralCode: Math.random().toString(36).substring(7).toUpperCase(),
               isWorker: false,
-              carbonSavingsKg: 17.5,
-              earnedBadges: ['pioneer'],
+              carbonSavingsKg: 0,
+              earnedBadges: [],
               createdAt: serverTimestamp(),
             };
             await setDoc(docRef, newProfile);
@@ -137,11 +277,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             uid: user.uid,
             email: user.email || '',
             username: user.displayName || user.email?.split('@')[0] || 'User',
-            rewardsPoints: 120,
+            rewardsPoints: 0,
             referralCode: Math.random().toString(36).substring(7).toUpperCase(),
             isWorker: false,
-            carbonSavingsKg: 17.5,
-            earnedBadges: ['pioneer'],
+            carbonSavingsKg: 0,
+            earnedBadges: [],
             createdAt: serverTimestamp(),
           };
           await setDoc(docRef, newProfile);
@@ -200,6 +340,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         gender: data.gender || '',
         mobileNumber: data.mobileNumber || '',
         rewardsPoints: 0,
+        carbonSavingsKg: 0,
+        earnedBadges: [],
         referralCode: Math.random().toString(36).substring(7).toUpperCase(),
         isWorker: false,
         createdAt: serverTimestamp(),
@@ -222,6 +364,51 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const simulateOAuthSignIn = async (providerName: 'apple' | 'microsoft') => {
+    const email = `${providerName}-tester@konnects.dev`;
+    const pass = `${providerName.charAt(0).toUpperCase() + providerName.slice(1)}Tester123!`;
+    const username = `${providerName === 'apple' ? 'Apple' : 'Microsoft'} Tester`;
+    
+    try {
+      let result;
+      try {
+        result = await signInWithEmailAndPassword(auth, email, pass);
+      } catch (signInErr: any) {
+        if (signInErr.code === 'auth/user-not-found' || signInErr.code === 'auth/invalid-credential' || signInErr.code === 'auth/wrong-password') {
+          result = await createUserWithEmailAndPassword(auth, email, pass);
+        } else {
+          throw signInErr;
+        }
+      }
+      
+      const loggedUser = result.user;
+      const docRef = doc(db, 'users', loggedUser.uid);
+      const docSnap = await getDoc(docRef);
+      
+      if (!docSnap.exists()) {
+        const newProfile: UserProfile = {
+          uid: loggedUser.uid,
+          email: loggedUser.email || '',
+          username: username,
+          rewardsPoints: 50,
+          carbonSavingsKg: 0,
+          earnedBadges: [],
+          referralCode: Math.random().toString(36).substring(7).toUpperCase(),
+          isWorker: false,
+          createdAt: serverTimestamp(),
+        };
+        try {
+          await setDoc(docRef, newProfile);
+        } catch (firestoreErr) {
+          handleFirestoreError(firestoreErr, OperationType.CREATE, `users/${loggedUser.uid}`);
+        }
+      }
+    } catch (error: any) {
+      console.error(`Simulation failed for ${providerName}:`, error);
+      throw error;
+    }
+  };
+
   const logout = async () => {
     try {
       await signOut(auth);
@@ -231,7 +418,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signIn, emailSignIn, emailSignUp, resetPassword, logout }}>
+    <AuthContext.Provider value={{ user, profile, loading, signIn, simulateOAuthSignIn, emailSignIn, emailSignUp, resetPassword, logout }}>
       {children}
     </AuthContext.Provider>
   );

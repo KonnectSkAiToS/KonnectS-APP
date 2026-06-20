@@ -44,6 +44,10 @@ export const haptics = {
    */
   getIntensityMultiplier: () => {
     if (typeof localStorage !== 'undefined') {
+      const sliderVal = localStorage.getItem('haptics_slider_intensity');
+      if (sliderVal !== null) {
+        return parseFloat(sliderVal);
+      }
       const mode = localStorage.getItem('haptics_intensity') || 'medium';
       if (mode === 'subtle') return 0.5;
       if (mode === 'strong') return 1.8;
@@ -115,6 +119,38 @@ export const haptics = {
     if (haptics.isEnabled() && haptics.isRidesEnabled() && typeof navigator !== 'undefined' && navigator.vibrate) {
       // Oscillating notice for ride movements
       navigator.vibrate(haptics.scale([30, 60, 30]));
+    }
+  },
+
+  /**
+   * Custom Ride Arrival vibration pattern responsive to settings.
+   */
+  rideArrival: () => {
+    if (haptics.isEnabled() && typeof navigator !== 'undefined' && navigator.vibrate) {
+      const pattern = localStorage.getItem('haptics_ride_arrival_pattern') || 'long_pulse';
+      if (pattern === 'long_pulse') {
+        navigator.vibrate(haptics.scale(350));
+      } else if (pattern === 'short_buzz') {
+        navigator.vibrate(haptics.scale(40));
+      } else if (pattern === 'double_pulse') {
+        navigator.vibrate(haptics.scale([80, 40, 80]));
+      }
+    }
+  },
+
+  /**
+   * Custom Message Notification vibration pattern responsive to settings.
+   */
+  messageNotification: () => {
+    if (haptics.isEnabled() && typeof navigator !== 'undefined' && navigator.vibrate) {
+      const pattern = localStorage.getItem('haptics_message_pattern') || 'short_buzz';
+      if (pattern === 'short_buzz') {
+        navigator.vibrate(haptics.scale(40));
+      } else if (pattern === 'double_pulse') {
+        navigator.vibrate(haptics.scale([60, 30, 60]));
+      } else if (pattern === 'long_pulse') {
+        navigator.vibrate(haptics.scale(250));
+      }
     }
   },
 

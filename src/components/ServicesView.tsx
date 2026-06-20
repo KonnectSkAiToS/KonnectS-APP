@@ -11,6 +11,7 @@ import {
   Sparkles, CheckCircle2, Mic, Map as MapIcon, Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { LazyImage } from './LazyImage';
 import { collection, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -1302,11 +1303,20 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
               className="relative w-full max-w-md bg-white rounded-t-[40px] sm:rounded-[40px] p-8 shadow-2xl overflow-y-auto max-h-[90vh] no-scrollbar pointer-events-auto"
             >
                <div className="flex justify-between items-start mb-6">
-                  <div>
-                    <h2 className="text-2xl font-black text-slate-900 tracking-tight">Finalise Booking</h2>
-                    <p className="text-[9.5px] text-slate-400 font-mono font-black uppercase tracking-widest mt-1">Matched: {selectedService.proName || 'Local Specialist'}</p>
+                  <div className="flex gap-3.5 items-center">
+                    <div className="w-12 h-12 rounded-2xl overflow-hidden shrink-0 border border-slate-100 shadow-sm">
+                      <LazyImage
+                        src="https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=150"
+                        alt={selectedService.proName || 'Local Specialist'}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div>
+                      <h2 className="text-xl font-black text-slate-900 tracking-tight">Finalise Booking</h2>
+                      <p className="text-[9.5px] text-slate-400 font-mono font-black uppercase tracking-widest mt-0.5">Matched: {selectedService.proName || 'Local Specialist'}</p>
+                    </div>
                   </div>
-                  <button onClick={() => setSelectedService(null)} className="p-3 bg-slate-50 text-slate-400 rounded-2xl hover:bg-slate-100 transition-colors border-none">
+                  <button onClick={() => setSelectedService(null)} className="p-3 bg-slate-50 text-slate-400 rounded-2xl hover:bg-slate-100 transition-colors border-none cursor-pointer">
                     <X size={18} />
                   </button>
                </div>

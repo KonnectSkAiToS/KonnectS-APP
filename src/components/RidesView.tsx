@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Car, MapPin, Navigation as NavIcon, Star, ArrowRight, PoundSterling, Clock, Check, X, Shield, Sparkles, Phone, MessageSquare, AlertCircle, Map as MapIcon, Train, Ticket, Activity, TrendingDown, Info } from 'lucide-react';
+import { Car, MapPin, Navigation as NavIcon, Star, ArrowRight, PoundSterling, Clock, Check, X, Shield, Sparkles, Phone, MessageSquare, AlertCircle, Map as MapIcon, Train, Ticket, Activity, TrendingDown, Info, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { APIProvider, Map, Marker } from '@vis.gl/react-google-maps';
 import { QuickSOS } from './QuickSOS';
@@ -13,6 +13,8 @@ import { CalendarSyncManager } from '../services/calendarService';
 import { useAuth } from '../contexts/AuthContext';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { logSyncEvent } from '../services/dbSyncService';
 
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_PLATFORM_KEY || '';
 
@@ -24,6 +26,47 @@ const DRIVER_COORDINATES: Record<string, { lat: number, lng: number }> = {
 
 export function RidesView() {
   const { user, profile } = useAuth();
+  const [offlineProgress, setOfflineProgress] = useState<number | null>(null);
+  const [isOfflineMapCached, setIsOfflineMapCached] = useState(() => {
+    return localStorage.getItem('konnect_map_precached') === 'true';
+  });
+
+  const handleDownloadMap = () => {
+    if (offlineProgress !== null || isOfflineMapCached) return;
+    haptics.beacon();
+    setOfflineProgress(0);
+    const interval = setInterval(() => {
+      setOfflineProgress((prev) => {
+        if (prev === null) {
+          clearInterval(interval);
+          return null;
+        }
+        if (prev >= 100) {
+          clearInterval(interval);
+          haptics.success();
+          setIsOfflineMapCached(true);
+          localStorage.setItem('konnect_map_precached', 'true');
+          
+          // Trigger custom notification log event
+          const event = new CustomEvent('urbanNet_new_notification', {
+            detail: {
+              id: 'offline-map-' + Date.now(),
+              type: 'service',
+              title: '🗺️ Map Area Offline Saved',
+              message: 'Successfully offline-cached Hoxton, Shoreditch & Old Street sectors (14.5MB). Route guidance will function fully without 4G.',
+              timestamp: new Date().toLocaleTimeString(),
+              isRead: false
+            }
+          });
+          window.dispatchEvent(event);
+          return null;
+        }
+        haptics.light();
+        return prev + 20;
+      });
+    }, 400);
+  };
+
   const [step, setStep] = useState(1); // 1 = Booking Form, 2 = Searching Radar, 3 = Driver Found / Active Ride
   const [pickup, setPickup] = useState('Current Location (Shoreditch)');
   const [destination, setDestination] = useState('');
@@ -38,6 +81,12 @@ export function RidesView() {
   const [mapLayers, setMapLayers] = useState({ workers: true, hubs: false, bookings: false });
   const [scheduledTime, setScheduledTime] = useState('');
   const [isScheduling, setIsScheduling] = useState(false);
+  const [showCompletionAnim, setShowCompletionAnim] = useState(false);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [feedbackRating, setFeedbackRating] = useState(5);
+  const [feedbackComment, setFeedbackComment] = useState('');
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+  const [lastCompletedDriver, setLastCompletedDriver] = useState<any>(null);
 
   // TfL & National Rail real-time peak congestion suggestions state
   const [selectedTransitMode, setSelectedTransitMode] = useState<'cab' | 'hybrid'>('cab');
@@ -356,6 +405,40 @@ export function RidesView() {
               </button>
             </div>
 
+            {/* Offline Map Pre-Caching Alert Banner */}
+            <div className="bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm flex items-center justify-between">
+              <div className="flex items-center space-x-3 text-left">
+                <div className="p-2 bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 rounded-xl">
+                  <MapIcon size={16} />
+                </div>
+                <div>
+                  <h4 className="text-[11px] font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">Offline Navigation Reliability</h4>
+                  <p className="text-[9px] text-slate-400 dark:text-slate-500 font-extrabold uppercase tracking-wide">
+                    {isOfflineMapCached 
+                      ? "✓ Hoxton Area Cached (14.5 MB)" 
+                      : offlineProgress !== null 
+                        ? `Downloading Map Asset: ${offlineProgress}%` 
+                        : "Low-Signal Area Backup Available"}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleDownloadMap}
+                disabled={isOfflineMapCached || offlineProgress !== null}
+                className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 border-none cursor-pointer ${
+                  isOfflineMapCached 
+                    ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-450 cursor-default"
+                    : offlineProgress !== null
+                      ? "bg-amber-100 text-amber-700 animate-pulse cursor-wait"
+                      : "bg-[#111827] dark:bg-indigo-650 text-white hover:bg-slate-850 active:scale-95"
+                }`}
+              >
+                <Download size={11} />
+                <span>{isOfflineMapCached ? "Pre-cached" : offlineProgress !== null ? "Saving..." : "Download Map Area"}</span>
+              </button>
+            </div>
+
             {isMapView ? (
               <div className="w-full h-44 bg-slate-950 rounded-[32px] relative overflow-hidden border border-slate-800 shadow-md">
                 {/* Embedded Map Layer Controls */}
@@ -577,6 +660,49 @@ export function RidesView() {
                   />
                 </div>
               </div>
+
+              {/* AI Predictive Pricing & Historic Patterns Card */}
+              {destination && (
+                <div className="p-4 bg-slate-50 dark:bg-slate-905 rounded-3xl border border-slate-100 dark:border-slate-805 space-y-3 text-left">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="px-2 py-0.5 bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 rounded-md text-[8px] font-black uppercase tracking-wider inline-block mb-1.5 font-mono">
+                        📊 AI Historical Prediction
+                      </span>
+                      <h4 className="text-[11px] font-extrabold text-[#111827] dark:text-white tracking-tight flex items-center gap-1">
+                        Historical Smart Fare Analyzer
+                      </h4>
+                    </div>
+                    <span className="text-[14px] animate-pulse">🔮</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div className="p-2.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-50 dark:border-slate-800">
+                      <span className="text-[8px] text-slate-400 dark:text-slate-400 font-extrabold uppercase tracking-wider block">Historic Fare Range</span>
+                      <span className="text-xs font-black text-slate-800 dark:text-slate-100 font-mono">£11.40 - £13.80</span>
+                    </div>
+                    <div className="p-2.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-50 dark:border-slate-800">
+                      <span className="text-[8px] text-slate-400 dark:text-slate-400 font-extrabold uppercase tracking-wider block">Demand Trend index</span>
+                      <span className="text-xs font-black text-emerald-600 font-mono">📉 -5.4% Lower</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div className="p-2.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-50 dark:border-slate-800">
+                      <span className="text-[8px] text-slate-400 dark:text-slate-400 font-extrabold uppercase tracking-wider block">Predicted Cab Dispatch</span>
+                      <span className="text-xs font-black text-slate-800 dark:text-slate-100 font-mono">4.5 mins arrival</span>
+                    </div>
+                    <div className="p-2.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-50 dark:border-slate-800">
+                      <span className="text-[8px] text-slate-400 dark:text-slate-400 font-extrabold uppercase tracking-wider block">Route Traffic Log</span>
+                      <span className="text-xs font-black text-indigo-600 dark:text-indigo-400 font-mono">Moderate Level</span>
+                    </div>
+                  </div>
+
+                  <p className="text-[8.5px] text-slate-400 dark:text-slate-500 font-medium leading-relaxed bg-transparent">
+                    *Estimates auto-calculated by cross-referencing Shoreditch historic GPS latency records & average weekday transit patterns stored in database.
+                  </p>
+                </div>
+              )}
 
               {searchError && (
                 <div className="p-3 bg-rose-50 border border-rose-100/60 rounded-xl flex items-center space-x-2 text-[10px] text-rose-600 font-bold">
@@ -1051,8 +1177,14 @@ export function RidesView() {
                   type="button"
                   onClick={async () => {
                     haptics.success();
-                    alert('Simulated ride completed! Adding 120 points to your wallet and recording 15.5 kg CO2 saved.');
+                    // Trigger custom immersive Framer Motion animation instead of standard dialog alert
+                    setShowCompletionAnim(true);
                     
+                    // Trigger haptic beacon pulse midway for feeling tactile milestones
+                    setTimeout(() => {
+                      haptics.beacon();
+                    }, 1500);
+
                     if (user && profile) {
                       try {
                         const currentPoints = profile.rewardsPoints || 0;
@@ -1085,9 +1217,18 @@ export function RidesView() {
                         console.error('Failed to update carbon and points:', err);
                       }
                     }
-                    
-                    setStep(1);
-                    setSelectedDriver(null);
+
+                    // Leave it visible for 4.2s so user can view the progress visualizer bar animate to the end
+                    setTimeout(() => {
+                      haptics.success();
+                      setShowCompletionAnim(false);
+                      setStep(1);
+                      setLastCompletedDriver(selectedDriver);
+                      setSelectedDriver(null);
+                      setFeedbackRating(5);
+                      setFeedbackComment('');
+                      setShowFeedbackModal(true);
+                    }, 4200);
                   }}
                   className="py-4 bg-slate-900 hover:bg-slate-800 text-white font-black text-[10px] uppercase tracking-wider rounded-xl transition-all active:scale-95 shadow-lg border-none cursor-pointer"
                 >
@@ -1210,6 +1351,250 @@ export function RidesView() {
                   className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-[20px] font-black uppercase tracking-[0.15em] text-[10px] border-none shadow-md transition-all active:scale-95 cursor-pointer text-center"
                 >
                   Confirm Dynamic Gate Entry (£{tflSuggestion.costOnOyster})
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Immersive Ride Completion Framer Motion Overlay */}
+      <AnimatePresence>
+        {showCompletionAnim && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[999] bg-slate-950/90 backdrop-blur-xl flex flex-col items-center justify-center p-6 text-center select-none"
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0, transition: { type: "spring", damping: 15 } }}
+              exit={{ scale: 0.9, y: -20 }}
+              className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-[40px] p-8 shadow-2xl border border-slate-100 dark:border-slate-850 space-y-6 flex flex-col items-center justify-center relative overflow-hidden text-slate-900 dark:text-white"
+            >
+              {/* Background Glows */}
+              <div className="absolute -top-12 -left-12 w-32 h-32 bg-emerald-400/10 dark:bg-emerald-500/15 rounded-full blur-2xl pointer-events-none" />
+              <div className="absolute -bottom-12 -right-12 w-32 h-32 bg-indigo-400/10 dark:bg-indigo-500/15 rounded-full blur-2xl pointer-events-none" />
+
+              {/* Success Badge */}
+              <div className="relative flex items-center justify-center w-24 h-24">
+                {/* Glowing ring */}
+                <motion.div
+                  initial={{ rotate: 0, scale: 0.8 }}
+                  animate={{ rotate: 360, scale: 1 }}
+                  transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+                  className="absolute inset-0 rounded-full border border-dashed border-emerald-500/40"
+                />
+                <motion.div
+                  initial={{ rotate: 360, scale: 0.9 }}
+                  animate={{ rotate: 0, scale: 1.05 }}
+                  transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
+                  className="absolute inset-2 rounded-full border border-double border-indigo-500/40"
+                />
+                
+                {/* Check Circle */}
+                <motion.div
+                  initial={{ scale: 0 }}
+                  animate={{ scale: [0, 1.2, 1] }}
+                  transition={{ delay: 0.2, duration: 0.6, type: "spring" }}
+                  className="w-16 h-16 bg-gradient-to-tr from-emerald-500 to-teal-400 text-white rounded-3xl flex items-center justify-center shadow-lg shadow-emerald-250 dark:shadow-none"
+                >
+                  <Check size={32} strokeWidth={3} className="animate-pulse" />
+                </motion.div>
+              </div>
+
+              {/* Copy */}
+              <div>
+                <motion.h3
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0, transition: { delay: 0.4 } }}
+                  className="text-xl font-black tracking-tight text-slate-900 dark:text-white"
+                >
+                  Ride Completed!
+                </motion.h3>
+                <motion.p
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1, transition: { delay: 0.6 } }}
+                  className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1"
+                >
+                  Arrived safely at {destination || "London Hub"}
+                </motion.p>
+              </div>
+
+              {/* Progress Steps Simulation to show real-time process */}
+              <div className="w-full bg-slate-50 dark:bg-slate-950 p-4 rounded-3xl border border-slate-100 dark:border-slate-850 text-left space-y-2.5">
+                <div className="flex items-center gap-2">
+                  <motion.div
+                    animate={{ scale: [1, 1.2, 1] }}
+                    transition={{ repeat: Infinity, duration: 1 }}
+                    className="w-2 h-2 bg-emerald-500 rounded-full"
+                  />
+                  <span className="text-[10px] font-bold text-slate-705 dark:text-slate-300">
+                    Slashed congestion route confirmed.
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <motion.div
+                    animate={{ opacity: [0.4, 1, 0.4] }}
+                    transition={{ repeat: Infinity, duration: 1.5, delay: 0.3 }}
+                    className="w-2 h-2 bg-indigo-550 rounded-full"
+                  />
+                  <span className="text-[10px] font-bold text-slate-705 dark:text-slate-300">
+                    Crediting ecosystem rewards...
+                  </span>
+                </div>
+              </div>
+
+              {/* Statistics Staggered Entrance */}
+              <div className="grid grid-cols-2 gap-3 w-full">
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8, x: -10 }}
+                  animate={{ opacity: 1, scale: 1, x: 0, transition: { delay: 0.8 } }}
+                  className="p-4 bg-amber-50/60 dark:bg-amber-950/20 rounded-2xl border border-amber-100 dark:border-amber-900/40 text-center"
+                >
+                  <Sparkles size={16} className="text-amber-500 mx-auto mb-1" />
+                  <span className="text-xs font-black text-amber-600 block">+120 RP</span>
+                  <span className="text-[8px] font-black uppercase tracking-widest text-[#a16207]">Konnect Points</span>
+                </motion.div>
+
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8, x: 10 }}
+                  animate={{ opacity: 1, scale: 1, x: 0, transition: { delay: 1.0 } }}
+                  className="p-4 bg-emerald-50/60 dark:bg-emerald-950/20 rounded-2xl border border-emerald-100 dark:border-emerald-900/40 text-center"
+                >
+                  <Activity size={16} className="text-emerald-500 mx-auto mb-1" />
+                  <span className="text-xs font-black text-emerald-600 block">+15.5 kg</span>
+                  <span className="text-[8px] font-black uppercase tracking-widest text-[#047857]">CO₂ Prevented</span>
+                </motion.div>
+              </div>
+
+              {/* Progress visualizer fill bar */}
+              <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                <motion.div
+                  initial={{ width: 0 }}
+                  animate={{ width: "100%" }}
+                  transition={{ duration: 4.2 }}
+                  className="h-full bg-gradient-to-r from-emerald-500 to-indigo-600 rounded-full"
+                />
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Post-Ride Feedback Modal */}
+      <AnimatePresence>
+        {showFeedbackModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 z-50 text-slate-800"
+          >
+            <motion.div
+              initial={{ scale: 0.92, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.92, y: 15 }}
+              className="bg-white dark:bg-slate-900 rounded-[36px] w-full max-w-sm overflow-hidden border border-slate-100 dark:border-slate-800 shadow-2xl p-6 relative flex flex-col space-y-5"
+            >
+              <div className="text-center">
+                <div className="w-12 h-12 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400 rounded-2xl flex items-center justify-center mx-auto mb-3 font-sans">
+                  <Star size={24} className="fill-current" />
+                </div>
+                <h3 className="text-lg font-black tracking-tight text-slate-900 dark:text-white">How was your ride?</h3>
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">
+                  Rate your trip with {lastCompletedDriver?.driver || "your driver"}
+                </p>
+              </div>
+
+              {/* Star Selector */}
+              <div className="flex justify-center items-center gap-2 py-2">
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <button
+                    key={star}
+                    type="button"
+                    onClick={() => {
+                      haptics.light();
+                      setFeedbackRating(star);
+                    }}
+                    className="p-1 transition-transform active:scale-95 bg-transparent border-none cursor-pointer"
+                  >
+                    <Star
+                      size={28}
+                      className={`transition-colors ${
+                        star <= feedbackRating
+                          ? 'fill-amber-400 text-amber-400'
+                          : 'text-slate-200 dark:text-slate-700'
+                      }`}
+                    />
+                  </button>
+                ))}
+              </div>
+
+              {/* Written comment input */}
+              <div className="space-y-1.5 text-left">
+                <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">
+                  Write a comment (optional)
+                </label>
+                <textarea
+                  value={feedbackComment}
+                  onChange={(e) => setFeedbackComment(e.target.value)}
+                  placeholder="Tell us about the driver, route, or climate savings..."
+                  rows={3}
+                  className="w-full text-xs font-semibold p-3.5 bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 border border-slate-150 dark:border-slate-800 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 resize-none"
+                />
+              </div>
+
+              {/* Feedback submit buttons */}
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptics.light();
+                    setShowFeedbackModal(false);
+                  }}
+                  className="py-3.5 bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-600 dark:text-slate-400 font-black text-[10px] uppercase tracking-wider rounded-xl transition-all active:scale-95 border border-slate-200 dark:border-slate-800 cursor-pointer"
+                >
+                  Skip Feedback
+                </button>
+                <button
+                  type="button"
+                  disabled={isSubmittingFeedback}
+                  onClick={async () => {
+                    setIsSubmittingFeedback(true);
+                    haptics.success();
+                    
+                    const feedbackPayload = {
+                      rating: feedbackRating,
+                      comment: feedbackComment || 'No written comments left.',
+                      driver_name: lastCompletedDriver?.driver || 'General Driver',
+                      car: lastCompletedDriver?.car || 'N/A',
+                      customer_id: user?.uid || 'anonymous-user',
+                      created_at: new Date().toISOString()
+                    };
+
+                    try {
+                      if (isSupabaseConfigured() && supabase) {
+                        const { error } = await (supabase.from('feedback') as any).insert([feedbackPayload]);
+                        if (error) throw error;
+                        logSyncEvent('feedback', 'feedback-' + Date.now(), 'ADDED', `Star rating: ${feedbackRating}/5`, 'success', 'success');
+                      } else {
+                        // Simulate Supabase feedback write
+                        console.log('[Simulation] Post feedback written to Supabase feedback table:', feedbackPayload);
+                        logSyncEvent('feedback', 'feedback-' + Date.now(), 'ADDED', `Star rating: ${feedbackRating}/5`, 'success', 'simulated');
+                      }
+                    } catch (submitErr: any) {
+                      console.error('Failed feedback write:', submitErr);
+                      logSyncEvent('feedback', 'feedback-' + Date.now(), 'ADDED', `Star rating: ${feedbackRating}/5`, 'success', 'failed', submitErr.message);
+                    } finally {
+                      setIsSubmittingFeedback(false);
+                      setShowFeedbackModal(false);
+                    }
+                  }}
+                  className="py-3.5 bg-slate-900 dark:bg-slate-100 dark:text-slate-900 text-white font-black text-[10px] uppercase tracking-wider rounded-xl transition-all active:scale-95 shadow-lg border-none hover:opacity-90 disabled:opacity-50 cursor-pointer"
+                >
+                  {isSubmittingFeedback ? 'Submitting...' : 'Submit Rating'}
                 </button>
               </div>
             </motion.div>

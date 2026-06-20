@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Search, MapPin, Bell, Car, ShoppingBag, Briefcase, Package, LifeBuoy, MoreHorizontal, ArrowRight, ToggleLeft, ToggleRight, Clock, Check, MessageSquare, X, Trash, Sparkles, Tag, TrendingUp, Target, PoundSterling, Plus, AlertTriangle } from 'lucide-react';
+import { Search, MapPin, Bell, Car, ShoppingBag, Briefcase, Package, LifeBuoy, MoreHorizontal, ArrowRight, ToggleLeft, ToggleRight, Clock, Check, MessageSquare, X, Trash, Sparkles, Tag, TrendingUp, Target, PoundSterling, Plus, AlertTriangle, PhoneCall, Star, Info, Trophy, Award, Heart } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, Tooltip, XAxis, YAxis, ReferenceLine, PieChart, Pie, Cell, BarChart, Bar, Legend } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
@@ -24,8 +24,63 @@ import { getNotifications, saveNotifications, addNotification, NotificationItem 
 import { haptics } from '../utils/haptics';
 import { ExpenseInsight } from './ExpenseInsight';
 
+const tipIconsMap: Record<string, any> = {
+  Car: Car,
+  Briefcase: Briefcase,
+  ShoppingBag: ShoppingBag,
+  Award: Award,
+  Sparkles: Sparkles
+};
+
 export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => void }) {
   const { profile } = useAuth();
+  const [proTips, setProTips] = useState<any[]>([]);
+  const [loadingTips, setLoadingTips] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    const fetchProTips = async () => {
+      try {
+        const res = await fetch('/api/gemini/pro-tips');
+        if (!res.ok) throw new Error('API error');
+        const data = await res.json();
+        if (active && data?.tips) {
+          setProTips(data.tips);
+        }
+      } catch (err) {
+        console.warn('Failed to fetch pro-tips from server:', err);
+        if (active) {
+          setProTips([
+            {
+              title: "How to bundle rides",
+              tip: "Combine trips with verified Hoxton neighbors heading to similar postcodes to split fares and cut carbon emissions.",
+              category: "Rides",
+              iconName: "Car"
+            },
+            {
+              title: "Finding top professionals",
+              tip: "Look for the green 'Verified Pro' checkmark. These specialists have 10+ completed local services with over 4.8 stars.",
+              category: "Services",
+              iconName: "Briefcase"
+            },
+            {
+              title: "Save on delivery fee",
+              tip: "Add items to an existing neighborhood courier circle on the Marketplace to waive the standard sychronized courier surcharges.",
+              category: "Marketplace",
+              iconName: "ShoppingBag"
+            }
+          ]);
+        }
+      } finally {
+        if (active) setLoadingTips(false);
+      }
+    };
+    fetchProTips();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const [showFetch, setShowFetch] = useState(false);
   const [showCharity, setShowCharity] = useState(false);
   const [showMap, setShowMap] = useState(false);
@@ -172,6 +227,133 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
   const [loadingRecommendations, setLoadingRecommendations] = useState<boolean>(false);
   const [userLocationName, setUserLocationName] = useState<string>('Shoreditch, London');
 
+  // Long-press Context Menu & Favorites Shortcuts
+  const [longPressedItem, setLongPressedItem] = useState<{
+    name: string;
+    type: 'service' | 'ride' | 'category';
+    details?: string;
+  } | null>(null);
+
+  const [favorites, setFavorites] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('urbanNet_favorites');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const handleFavoriteToggle = (name: string) => {
+    let updated;
+    const isFav = favorites.includes(name);
+    if (isFav) {
+      updated = favorites.filter(f => f !== name);
+    } else {
+      updated = [...favorites, name];
+      const notificationEvent = new CustomEvent('urbanNet_new_notification', {
+        detail: {
+          id: 'fav-' + Date.now(),
+          type: 'info',
+          title: '⭐ Added to Favorites',
+          message: `"${name}" is now stored in your local quick-access favorites list.`,
+          timestamp: new Date().toLocaleTimeString(),
+          isRead: false
+        }
+      });
+      window.dispatchEvent(notificationEvent);
+    }
+    setFavorites(updated);
+    localStorage.setItem('urbanNet_favorites', JSON.stringify(updated));
+  };
+
+  const createLongPressHandlers = (itemName: string, itemType: 'service' | 'ride' | 'category', customDetails?: string) => {
+    let timer: any = null;
+
+    const start = (e: React.MouseEvent | React.TouchEvent) => {
+      // Clear any prior timer safely
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        haptics.heavy();
+        if (navigator.vibrate) {
+          navigator.vibrate([45]);
+        }
+        setLongPressedItem({
+          name: itemName,
+          type: itemType,
+          details: customDetails || `Premium high-performance ${itemType} optimized for active Shoreditch transit networks.`
+        });
+      }, 700); // long press threshold
+    };
+
+    const stop = () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+
+    return {
+      onMouseDown: start,
+      onTouchStart: start,
+      onMouseUp: stop,
+      onMouseLeave: stop,
+      onTouchEnd: stop,
+    };
+  };
+
+  // Radar & Geolocation States
+  const [userCoords, setUserCoords] = useState<{ lat: number; lng: number }>({ lat: 51.5260, lng: -0.0780 });
+  const [maxRadarRange, setMaxRadarRange] = useState<number>(1.2);
+  const [radarCategory, setRadarCategory] = useState<'All' | 'Support' | 'Event'>('All');
+  const [selectedRadarItem, setSelectedRadarItem] = useState<any>(null);
+  const [localEvents, setLocalEvents] = useState([
+    { id: 'ev-1', title: 'Hoxton Civic Food Hub', lat: 51.5282, lng: -0.0762, category: 'Support', description: 'Volunteers and stock sorters needed to help local families distribute grain and bread logs.', urgency: 'High', responsiveUsers: 14, registered: false },
+    { id: 'ev-2', title: 'Shoreditch Green Garden Walk', lat: 51.5245, lng: -0.0795, category: 'Event', description: 'Planting beautiful urban garden shrubbery and laying compost yards.', urgency: 'Medium', responsiveUsers: 8, registered: false },
+    { id: 'ev-3', title: 'Elderly Companion Electrical Sweep', lat: 51.5298, lng: -0.0735, category: 'Support', description: 'Certified plumbers/electricians support checking boiler safety checkups.', urgency: 'High', responsiveUsers: 5, registered: false },
+    { id: 'ev-4', title: 'Old Street Litter Clearing', lat: 51.5218, lng: -0.0715, category: 'Event', description: 'Eco-conscious street-wide separate litter picking group walks.', urgency: 'Low', responsiveUsers: 22, registered: false },
+    { id: 'ev-5', title: 'Hackney Tech Outreach Lounge', lat: 51.5305, lng: -0.0818, category: 'Support', description: 'Basic computer safety guidance tutorials for elderly neighbors.', urgency: 'Medium', responsiveUsers: 11, registered: false }
+  ]);
+
+  // Commute Insights States
+  const [commuteInsights, setCommuteInsights] = useState<any[]>([]);
+  const [loadingCommuteInsights, setLoadingCommuteInsights] = useState<boolean>(false);
+
+  const getHaversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371; // radius of Earth in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return parseFloat((R * c).toFixed(2)); // distance in km
+  };
+
+  const fetchCommuteInsights = async (originName: string) => {
+    setLoadingCommuteInsights(true);
+    try {
+      const resp = await fetch('/api/gemini/commute-insights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ origin: originName })
+      });
+      const data = await resp.json();
+      if (data.insights) {
+        setCommuteInsights(data.insights);
+      }
+    } catch (err) {
+      console.error("Failed to load commute insights:", err);
+    } finally {
+      setLoadingCommuteInsights(false);
+    }
+  };
+
+  useEffect(() => {
+    if (userLocationName) {
+      fetchCommuteInsights(userLocationName);
+    }
+  }, [userLocationName]);
+
   useEffect(() => {
     if (!profile?.uid) return;
 
@@ -187,6 +369,7 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
               lng: pos.coords.longitude,
               name: 'Hoxton, Shoreditch'
             };
+            setUserCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
             setUserLocationName(locationObj.name);
             fetchFromApi(locationObj);
           },
@@ -301,6 +484,31 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
 
   // In-app interactive Notification System
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notificationFilter, setNotificationFilter] = useState<'All' | 'Rides' | 'Marketplace'>('All');
+  const [dndEnabled, setDndEnabled] = useState(() => localStorage.getItem('dnd_enabled') === 'true');
+  const [dndMutedCategories, setDndMutedCategories] = useState<string[]>(() => {
+    const raw = localStorage.getItem('dnd_muted_categories');
+    return raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : ['Marketplace'];
+  });
+
+  const toggleDnd = () => {
+    const next = !dndEnabled;
+    setDndEnabled(next);
+    localStorage.setItem('dnd_enabled', next ? 'true' : 'false');
+    haptics.light();
+  };
+
+  const toggleDndMutedCategory = (category: string) => {
+    let next: string[];
+    if (dndMutedCategories.includes(category)) {
+      next = dndMutedCategories.filter(c => c !== category);
+    } else {
+      next = [...dndMutedCategories, category];
+    }
+    setDndMutedCategories(next);
+    localStorage.setItem('dnd_muted_categories', next.join(','));
+    haptics.light();
+  };
   const [notifications, setNotifications] = useState<NotificationItem[]>(() => {
     const existing = getNotifications();
     return existing.length ? existing : [
@@ -345,6 +553,21 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
         isRead: false
       }
     ];
+  });
+
+  // Computed filtered notifications listing
+  const filteredNotifications = notifications.filter(notif => {
+    const isRide = notif.type === 'ride' || notif.type === 'booking';
+    const isMarketplace = notif.type === 'order' || notif.type === 'like' || notif.type === 'discount' || notif.type === 'launch' || notif.type === 'search';
+
+    if (notificationFilter === 'Rides' && !isRide) return false;
+    if (notificationFilter === 'Marketplace' && !isMarketplace) return false;
+
+    if (dndEnabled) {
+      if (isRide && dndMutedCategories.includes('Rides')) return false;
+      if (isMarketplace && dndMutedCategories.includes('Marketplace')) return false;
+    }
+    return true;
   });
 
   useEffect(() => {
@@ -596,7 +819,7 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
   ];
 
   return (
-    <div className="pb-24 pt-6 px-4 max-w-md mx-auto min-h-screen">
+    <div className="max-w-md mx-auto h-[calc(100dvh-64px)] max-h-[calc(100dvh-64px)] overflow-hidden flex flex-col pt-3 px-4 pb-2 w-full">
       {showFetch && <FetchView onBack={() => setShowFetch(false)} />}
       {showCharity && <CharityView onBack={() => setShowCharity(false)} />}
       {showMap && <MapView onBack={() => setShowMap(false)} />}
@@ -687,8 +910,10 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
         unreadCount={notifications.filter(n => !n.isRead).length} 
       />
 
-      {profile?.isWorkerMode ? (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
+      {/* Scrollable container that confines the dashboard view within exactly one screen */}
+      <div className="flex-1 overflow-y-auto no-scrollbar space-y-4 pb-14 select-none">
+        {profile?.isWorkerMode ? (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
           <section>
              <h2 className="text-2xl font-black text-slate-900 mb-2">Worker Dashboard</h2>
              <p className="text-xs text-slate-500 font-bold uppercase tracking-widest opacity-60">Live Job Requests Nearby</p>
@@ -776,6 +1001,57 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
               </button>
             </div>
           </motion.div>
+
+          {/* Pro-Tips Horizontal Carousel using Gemini AI suggestions */}
+          <div className="mb-8">
+            <div className="flex justify-between items-center mb-3">
+              <div className="flex items-center gap-1.5">
+                <Sparkles size={14} className="text-indigo-600 dark:text-indigo-400 animate-pulse" />
+                <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Pro AI-Guided Tips</h3>
+              </div>
+              <span className="text-[7.5px] font-mono font-black text-indigo-505 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                Gemini Powered
+              </span>
+            </div>
+
+            {loadingTips ? (
+              <div className="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
+                {[1, 2].map((i) => (
+                  <div key={i} className="min-w-[260px] max-w-[260px] h-32 bg-slate-50 dark:bg-slate-900 rounded-3xl p-4.5 border border-slate-100 dark:border-slate-850 animate-pulse shrink-0" />
+                ))}
+              </div>
+            ) : (
+              <div className="flex gap-4 overflow-x-auto pb-2.5 no-scrollbar snap-x snap-mandatory font-sans">
+                {proTips.map((t, idx) => {
+                  const IconComp = tipIconsMap[t.iconName] || Sparkles;
+                  return (
+                    <motion.div
+                      key={idx}
+                      whileHover={{ y: -2, scale: 1.01 }}
+                      className="min-w-[260px] max-w-[260px] bg-gradient-to-br from-white to-slate-50/50 dark:from-slate-900 dark:to-slate-950/60 rounded-3xl p-4.5 border border-slate-100 dark:border-slate-800 shadow-xs shrink-0 flex flex-col justify-between snap-center transition-all duration-300"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="p-2 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400 rounded-xl shrink-0 mt-0.5">
+                          <IconComp size={15} />
+                        </div>
+                        <div className="text-left">
+                          <span className="text-[8px] font-black uppercase tracking-widest text-[#4f46e5] dark:text-indigo-400 block mb-0.5">
+                            {t.category}
+                          </span>
+                          <h4 className="text-[11px] font-black text-slate-900 dark:text-white leading-snug line-clamp-1">
+                            {t.title}
+                          </h4>
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed font-semibold">
+                            {t.tip}
+                          </p>
+                        </div>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           {/* Segmented Control Bar */}
           <div className="flex bg-slate-100 dark:bg-slate-900 p-1 rounded-2xl mb-8 border border-slate-150/40 dark:border-slate-800">
@@ -921,6 +1197,344 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
               </motion.section>
             )}
           </AnimatePresence>
+
+           {/* 📍 Interactive Local Proximity Radar Widget */}
+           {activeSegment === 'overview' && (
+              <section className="p-6 bg-white dark:bg-slate-950 border border-slate-100 dark:border-slate-850 rounded-[36px] shadow-sm space-y-5 text-left">
+                <div className="flex justify-between items-center flex-row">
+                  <div>
+                    <h3 className="font-extrabold text-base tracking-tight text-slate-900 dark:text-white">Community Proximity Radar</h3>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Interactive Geolocation Map Highlights</p>
+                  </div>
+                  <span className="p-2.5 bg-indigo-50 text-indigo-600 rounded-2xl text-xs font-black">🗺️ Live</span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  {/* Radar Interactive SVG */}
+                  <div className="flex flex-col items-center justify-center p-4 bg-slate-50 dark:bg-slate-900 rounded-3xl relative overflow-hidden">
+                    {/* Concentric rings background */}
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-20 dark:opacity-40">
+                      <div className="w-52 h-52 rounded-full border border-indigo-400 animate-pulse duration-[3s]" />
+                      <div className="w-32 h-32 rounded-full border border-indigo-300 absolute" />
+                      <div className="w-16 h-16 rounded-full border border-indigo-200 absolute" />
+                    </div>
+
+                    <svg width="240" height="240" className="relative z-10 cursor-crosshair">
+                      {/* Grid Circle boundaries */}
+                      <circle cx="120" cy="120" r="100" fill="none" stroke="#6366f1" strokeWidth="0.5" strokeDasharray="3 3" opacity="0.3" />
+                      <circle cx="120" cy="120" r="60" fill="none" stroke="#6366f1" strokeWidth="0.5" strokeDasharray="3 3" opacity="0.3" />
+                      <circle cx="120" cy="120" r="25" fill="none" stroke="#6366f1" strokeWidth="0.5" strokeDasharray="3 3" opacity="0.3" />
+                      
+                      {/* Compass lines */}
+                      <line x1="120" y1="20" x2="120" y2="220" stroke="#6366f1" strokeWidth="0.5" opacity="0.2" />
+                      <line x1="20" y1="120" x2="220" y2="120" stroke="#6366f1" strokeWidth="0.5" opacity="0.2" />
+
+                      {/* Sonar sweep effect */}
+                      <circle cx="120" cy="120" r="100" fill="none" stroke="url(#radarSweep)" strokeWidth="1.5" className="origin-center animate-[spin_5s_linear_infinite]" style={{ transformOrigin: '120px 120px' }} />
+                      
+                      <defs>
+                        <radialGradient id="radarSweep" cx="50%" cy="50%" r="50%">
+                          <stop offset="0%" stopColor="#818cf8" stopOpacity="0" />
+                          <stop offset="90%" stopColor="#6366f1" stopOpacity="0.1" />
+                          <stop offset="100%" stopColor="#4f46e5" stopOpacity="0.5" />
+                        </radialGradient>
+                      </defs>
+
+                      {/* Centered User Core Anchor */}
+                      <g cursor="help" onClick={() => { haptics.light(); alert(`Your Geolocation node: ${userLocationName}`); }}>
+                        <circle cx="120" cy="120" r="7" fill="#f59e0b" className="animate-ping opacity-75" />
+                        <circle cx="120" cy="120" r="5" fill="#d97706" stroke="#ffffff" strokeWidth="1" />
+                      </g>
+
+                      {/* Animated Path from Current Location (120,120) to Selected Node */}
+                      {selectedRadarItem && (() => {
+                        const dist = getHaversineDistance(userCoords.lat, userCoords.lng, selectedRadarItem.lat, selectedRadarItem.lng);
+                        const angle = Math.atan2(selectedRadarItem.lat - userCoords.lat, selectedRadarItem.lng - userCoords.lng);
+                        const distanceRatio = dist / maxRadarRange;
+                        const radius = Math.min(distanceRatio * 100, 100);
+                        const tCx = 120 + radius * Math.cos(angle);
+                        const tCy = 120 - radius * Math.sin(angle);
+                        
+                        // Slightly offset control point for elegant curved line
+                        const ctrlX = (120 + tCx) / 2 + 12 * Math.sin(angle);
+                        const ctrlY = (120 + tCy) / 2 - 12 * Math.cos(angle);
+                        const pD = `M 120 120 Q ${ctrlX} ${ctrlY} ${tCx} ${tCy}`;
+                        const strokeColor = selectedRadarItem.category === 'Support' ? '#ef4444' : '#10b981';
+
+                        return (
+                          <g pointerEvents="none">
+                            {/* Glow shadow line */}
+                            <path
+                              d={pD}
+                              fill="none"
+                              stroke={strokeColor}
+                              strokeWidth="4"
+                              opacity="0.15"
+                              strokeLinecap="round"
+                            />
+                            {/* Sharp animated dashed line */}
+                            <motion.path
+                              d={pD}
+                              fill="none"
+                              stroke={strokeColor}
+                              strokeWidth="1.5"
+                              strokeLinecap="round"
+                              initial={{ strokeDasharray: "4 4", strokeDashoffset: 0 }}
+                              animate={{ strokeDashoffset: -20 }}
+                              transition={{ repeat: Infinity, ease: "linear", duration: 0.8 }}
+                            />
+                            {/* Orbiting pulse bead */}
+                            <motion.circle
+                              r="3.5"
+                              fill={strokeColor}
+                              stroke="#ffffff"
+                              strokeWidth="1"
+                              opacity="0.9"
+                              animate={{
+                                cx: [120, tCx],
+                                cy: [120, tCy],
+                              }}
+                              transition={{
+                                repeat: Infinity,
+                                duration: 2.2,
+                                ease: "easeInOut",
+                              }}
+                            />
+                          </g>
+                        );
+                      })()}
+
+                      {/* Render filtered Event/Support nodes */}
+                      {localEvents
+                        .map(evt => {
+                          const dist = getHaversineDistance(userCoords.lat, userCoords.lng, evt.lat, evt.lng);
+                          return { ...evt, dist };
+                        })
+                        .filter(evt => evt.dist <= maxRadarRange)
+                        .filter(evt => radarCategory === 'All' || evt.category === radarCategory)
+                        .map(evt => {
+                          // Polar math projection
+                          const angle = Math.atan2(evt.lat - userCoords.lat, evt.lng - userCoords.lng);
+                          const distanceRatio = evt.dist / maxRadarRange;
+                          const radius = Math.min(distanceRatio * 100, 100);
+                          const cx = 120 + radius * Math.cos(angle);
+                          const cy = 120 - radius * Math.sin(angle);
+
+                          const isSelected = selectedRadarItem?.id === evt.id;
+                          const nodeColor = evt.category === 'Support' ? '#ef4444' : '#10b981';
+
+                          return (
+                            <g 
+                              key={evt.id} 
+                              onClick={() => { haptics.medium(); setSelectedRadarItem(evt); }}
+                              className="transition-all active:scale-95 cursor-pointer"
+                            >
+                              {isSelected && (
+                                <circle cx={cx} cy={cy} r={10} fill="none" stroke={nodeColor} strokeWidth="1.5" className="animate-pulse" />
+                              )}
+                              <circle cx={cx} cy={cy} r={6} fill={nodeColor} stroke="#ffffff" strokeWidth="1.5" className="hover:scale-125 transition-transform" />
+                              {evt.urgency === 'High' && (
+                                <circle cx={cx} cy={cy} r={3} fill="#ffffff" className="animate-ping" style={{ animationDuration: '1s' }} />
+                              )}
+                            </g>
+                          );
+                        })
+                      }
+                    </svg>
+                    
+                    <span className="text-[8px] font-mono font-black text-indigo-400 mt-3 tracking-widest uppercase">Sonar Proximity Grid (Range: {maxRadarRange}km)</span>
+                  </div>
+
+                  {/* Filters and Selection Context */}
+                  <div className="space-y-4 flex flex-col justify-between">
+                    <div className="space-y-3">
+                      {/* Category Switch */}
+                      <div className="flex gap-1.5 bg-slate-100 dark:bg-slate-900 p-1 rounded-2xl">
+                        {['All', 'Support', 'Event'].map((cat) => (
+                          <button
+                            key={cat}
+                            onClick={() => { haptics.light(); setRadarCategory(cat as any); }}
+                            className={`flex-1 py-1.5 text-[9px] font-black uppercase tracking-wider rounded-xl border-none cursor-pointer transition-all ${
+                              radarCategory === cat 
+                                ? 'bg-indigo-600 text-white shadow-xs' 
+                                : 'bg-transparent text-slate-500 hover:text-slate-800'
+                            }`}
+                          >
+                            {cat}s
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Range slider */}
+                      <div className="space-y-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-850 p-4 rounded-3xl text-left">
+                        <div className="flex justify-between items-center flex-row">
+                          <span className="text-[9px] font-black uppercase text-slate-400">Radial Constraint Limit</span>
+                          <span className="text-[10px] font-mono font-bold text-indigo-600">{maxRadarRange} km</span>
+                        </div>
+                        <input 
+                          type="range"
+                          min="0.3"
+                          max="2.0"
+                          step="0.1"
+                          value={maxRadarRange}
+                          onChange={(e) => { setMaxRadarRange(parseFloat(e.target.value)); setSelectedRadarItem(null); }}
+                          className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+                        />
+                      </div>
+                    </div>
+
+                    {/* selected sheet details */}
+                    <AnimatePresence mode="wait">
+                      {selectedRadarItem ? (
+                        <motion.div
+                          key={selectedRadarItem.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -10 }}
+                          className="p-4 bg-indigo-50/50 dark:bg-indigo-950/20 rounded-[28px] border border-indigo-100/60 dark:border-indigo-950/40 relative space-y-2.5 text-left"
+                        >
+                          <button 
+                            onClick={() => setSelectedRadarItem(null)}
+                            className="absolute top-2 right-2 p-1.5 bg-white shadow-xs rounded-full border-none cursor-pointer hover:bg-slate-100 text-slate-400 hover:text-slate-600"
+                          >
+                            <X size={10} />
+                          </button>
+
+                          <div className="flex items-center space-x-2">
+                            <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest ${
+                              selectedRadarItem.category === 'Support' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'
+                            }`}>
+                              {selectedRadarItem.category}
+                            </span>
+                            <span className="text-[8.5px] font-black uppercase tracking-widest font-mono text-indigo-500">
+                              {getHaversineDistance(userCoords.lat, userCoords.lng, selectedRadarItem.lat, selectedRadarItem.lng)} km away
+                            </span>
+                          </div>
+
+                          <h4 className="font-extrabold text-xs text-slate-900 dark:text-white leading-tight">{selectedRadarItem.title}</h4>
+                          <p className="text-[10px] text-slate-500 leading-normal">{selectedRadarItem.description}</p>
+
+                          <div className="flex items-center justify-between pt-1 flex-row">
+                            <span className="text-[9px] font-bold text-slate-400">👤 {selectedRadarItem.responsiveUsers} joined</span>
+                            <button
+                              disabled={selectedRadarItem.registered}
+                              onClick={() => {
+                                haptics.heavy();
+                                setLocalEvents(prev => prev.map(evt => {
+                                  if (evt.id === selectedRadarItem.id) {
+                                    return { ...evt, responsiveUsers: evt.responsiveUsers + 1, registered: true };
+                                  }
+                                  return evt;
+                                }));
+                                setSelectedRadarItem((prev: any) => ({ ...prev, responsiveUsers: prev.responsiveUsers + 1, registered: true }));
+                                
+                                const notificationEvent = new CustomEvent('urbanNet_new_notification', {
+                                  detail: {
+                                    id: 'radar-join-' + Date.now(),
+                                    type: 'community',
+                                    title: '🙌 Registered Successfully',
+                                    message: `You are confirmed for "${selectedRadarItem.title}"! Added to task list.`,
+                                    timestamp: new Date().toLocaleTimeString(),
+                                    isRead: false
+                                  }
+                                });
+                                window.dispatchEvent(notificationEvent);
+                              }}
+                              className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest border-none cursor-pointer transition-all ${
+                                selectedRadarItem.registered 
+                                  ? 'bg-emerald-50 text-emerald-600' 
+                                  : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow shadow-indigo-150'
+                              }`}
+                            >
+                              {selectedRadarItem.registered ? 'Joined ✓' : 'Support / RSVP'}
+                            </button>
+                          </div>
+                        </motion.div>
+                      ) : (
+                        <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-[28px] border border-slate-100 dark:border-slate-850 flex items-center justify-center text-center h-[125px]">
+                          <p className="text-[10px] text-slate-400 font-bold leading-relaxed px-4">
+                            👈 Click or tap onto any colored node on the Sonar Sweep to load hyper-local community details and participate.
+                          </p>
+                        </div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </div>
+              </section>
+           )}
+
+           {/* 🚌 AI Commute Insights Grounded Widget */}
+           {activeSegment === 'overview' && (
+              <section className="p-6 bg-slate-900 border border-slate-800 rounded-[36px] shadow-sm text-white space-y-4 text-left">
+                <div className="flex justify-between items-center flex-row">
+                  <div>
+                    <h3 className="font-extrabold text-base tracking-tight text-white">AI Commute Insights</h3>
+                    <p className="text-[10px] text-indigo-300 font-bold uppercase tracking-widest mt-0.5">Live Traffic Grounded Transit Planner</p>
+                  </div>
+                  <button 
+                    onClick={() => { haptics.light(); fetchCommuteInsights(userLocationName); }}
+                    className="p-2.5 bg-indigo-600 border-none rounded-2xl text-[9px] font-black uppercase text-white cursor-pointer hover:bg-indigo-700 transition-colors"
+                  >
+                    Refresh
+                  </button>
+                </div>
+
+                {loadingCommuteInsights ? (
+                  <div className="p-8 flex flex-col items-center justify-center text-center space-y-3">
+                    <div className="w-8 h-8 rounded-full border-4 border-indigo-500 border-t-transparent animate-spin" />
+                    <p className="text-[10px] font-bold text-slate-400">Verifying road networks and public transit matrices via Google Search Grounding...</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between text-[9px] text-indigo-200 px-1 border-b border-slate-800 pb-2 flex-row">
+                      <span>Origin: 📍 <span className="font-bold">{userLocationName}</span></span>
+                      <span className="font-black bg-indigo-950 px-2 py-0.5 rounded text-indigo-400 uppercase tracking-widest font-mono text-[8px]">Google Search Active</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                      {commuteInsights.map((insight, idx) => {
+                        const isSevere = insight.trafficStatus.toLowerCase().includes('congest') || insight.trafficStatus.toLowerCase().includes('severe');
+                        const isMinor = insight.trafficStatus.toLowerCase().includes('minor') || insight.trafficStatus.toLowerCase().includes('delayed') || insight.trafficStatus.toLowerCase().includes('slow');
+                        
+                        const statusColor = isSevere 
+                          ? 'bg-rose-500/15 text-rose-400' 
+                          : isMinor 
+                            ? 'bg-amber-500/15 text-amber-400' 
+                            : 'bg-emerald-500/15 text-emerald-400';
+
+                        return (
+                          <div 
+                            key={idx} 
+                            className="p-4 bg-slate-950 border border-slate-850 rounded-2xl flex flex-col justify-between space-y-3"
+                          >
+                            <div className="flex justify-between items-start flex-row">
+                              <span className="text-xs font-black tracking-tight">{insight.destination}</span>
+                              <span className="text-sm font-black font-mono text-indigo-400">{insight.travelTime}</span>
+                            </div>
+
+                            <div className="space-y-1">
+                              <div className="flex items-center space-x-1.5 flex-row">
+                                <span className="text-[8px] bg-indigo-950 font-black text-indigo-300 px-1.5 py-0.5 rounded uppercase tracking-wider font-mono">
+                                  {insight.fastestMode}
+                                </span>
+                                <span className={`text-[8px] px-2 py-0.5 rounded uppercase font-black tracking-widest font-mono ${statusColor}`}>
+                                  {insight.trafficStatus}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-400 leading-normal pt-1">{insight.routesDetails}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <p className="text-center text-[8.5px] font-mono font-bold text-slate-500 pt-1 font-mono">
+                      * Real-time routing is based on Google Search grounding and reflects active London transit indices.
+                    </p>
+                  </div>
+                )}
+              </section>
+           )}
 
            {/* ✨ Quick Task AI Suggestions Section */}
           <section className="p-6 bg-gradient-to-br from-indigo-50/50 to-indigo-100/30 dark:from-slate-900/40 dark:to-slate-950/40 border border-indigo-100/40 dark:border-indigo-950/40 rounded-[36px] shadow-sm space-y-4">
@@ -1185,12 +1799,14 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
                       whileHover={{ y: -2 }}
                       whileTap={{ scale: 0.98 }}
                       onClick={() => {
+                        haptics.light();
                         (window as any).__globalSearchTerm = rec.proName;
                         if ((window as any).__navigateTab) {
                           (window as any).__navigateTab('services');
                         }
                       }}
-                      className="cursor-pointer p-4 bg-white/90 dark:bg-slate-900/90 hover:bg-white dark:hover:bg-slate-900 rounded-2xl border border-indigo-50/20 dark:border-indigo-950/50 shadow-xs flex flex-col justify-between group transition-all"
+                      className="cursor-pointer p-4 bg-white/90 dark:bg-slate-900/90 hover:bg-white dark:hover:bg-slate-900 rounded-2xl border border-indigo-50/20 dark:border-indigo-950/50 shadow-xs flex flex-col justify-between group transition-all select-none relative"
+                      {...createLongPressHandlers(rec.serviceName, 'service', `${rec.proName} offers professional ${rec.serviceName} starting from £${rec.estimatedPrice}/hr.`)}
                     >
                       <div className="space-y-2">
                         <div className="flex justify-between items-start gap-2">
@@ -1243,10 +1859,12 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
               {categories.map((cat, i) => (
                 <motion.button
                   key={i}
+                  id={`top-service-cat-${cat.label.toLowerCase().replace(/\s+/g, '-')}`}
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ delay: i * 0.05 }}
                   onClick={() => {
+                    haptics.light();
                     if (cat.label === 'Fetch it') {
                       setShowFetch(true);
                     } else if (cat.label === 'Charity') {
@@ -1265,7 +1883,8 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
                       }
                     }
                   }}
-                  className="flex flex-col items-center group"
+                  className="flex flex-col items-center group select-none relative"
+                  {...createLongPressHandlers(cat.label, cat.label === 'Rides' ? 'ride' : 'service', cat.tooltip)}
                 >
                   <div 
                     title={cat.tooltip}
@@ -1427,9 +2046,141 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
               </div>
               <button 
                 onClick={() => setShowCharity(true)}
-                className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-xs font-bold"
+                className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-xs font-bold font-sans cursor-pointer"
               >
                 Donate Now
+              </button>
+            </div>
+          </section>
+
+          {/* 👥 Community Impact Leaderboard section */}
+          <section className="mb-10 p-6 bg-linear-to-br from-indigo-50/20 to-violet-50/20 dark:from-slate-900/30 dark:to-indigo-950/20 border border-slate-100 dark:border-slate-850/60 rounded-[36px] shadow-sm space-y-5 text-left">
+            <div className="flex justify-between items-start flex-row">
+              <div>
+                <div className="flex items-center gap-1.5 label text-[9px] font-black uppercase tracking-widest text-[#6366f1] bg-indigo-50 dark:bg-indigo-950/40 px-2.5 py-0.5 rounded border border-indigo-100/40 w-fit">
+                  <Trophy size={11} className="text-amber-500" />
+                  <span>Civic Honor Roll</span>
+                </div>
+                <h4 className="font-black text-base text-slate-900 dark:text-white tracking-tight mt-1">
+                  Community Impact Champions
+                </h4>
+                <p className="text-[10px] text-slate-500 font-bold dark:text-slate-400">
+                  Highlighting neighbors who resolved the most local support requests this month.
+                </p>
+              </div>
+
+              <div className="px-2.5 py-1 bg-amber-500/10 text-amber-500 border border-amber-500/20 rounded-xl text-[9px] font-black uppercase tracking-wider">
+                👑 Shoreditch
+              </div>
+            </div>
+
+            {/* Interactive Leaderboard List */}
+            <div className="space-y-2.5">
+              {[
+                { rank: 1, name: 'Arthur Pendelton', count: 48, badge: 'Civic Champion 👑', color: 'bg-amber-550 text-white border-amber-300' },
+                { rank: 2, name: 'Sarah Jenkins', count: 41, badge: 'Eco Advocate 🍃', color: 'bg-slate-400 text-white border-slate-300' },
+                { rank: 3, name: 'James McOwen', count: 35, badge: 'Local Hero 🛡️', color: 'bg-amber-700 text-white border-amber-800' },
+                { rank: 4, name: 'Meera Patel', count: 29, badge: 'Support Angel 💖', color: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 border-indigo-200/40' },
+                { rank: 5, name: profile?.username || 'You (Rising Star)', count: localStorage.getItem('user_local_assists_count') ? Number(localStorage.getItem('user_local_assists_count')) : 16, badge: 'Rising Star 🌱', color: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border-emerald-250/30' }
+              ].sort((a, b) => b.count - a.count).map((hero, idx) => {
+                const isCurrentUser = hero.name === (profile?.username || 'You (Rising Star)');
+                return (
+                  <div 
+                    key={hero.name}
+                    className={`p-3.5 rounded-2xl border transition-all flex items-center justify-between ${
+                      isCurrentUser 
+                        ? 'bg-emerald-500/5 border-emerald-500/30 ring-2 ring-emerald-500/10 scale-[1.01]' 
+                        : 'bg-white dark:bg-slate-905 border-slate-100 dark:border-slate-850 hover:bg-slate-50/50 dark:hover:bg-slate-850/50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      {/* Rank Indicator Badge */}
+                      <span className={`w-6 h-6 rounded-xl flex items-center justify-center font-mono font-black text-[10px] border ${
+                        idx === 0 ? 'bg-amber-400 border-amber-500 text-slate-950 shadow-xs' :
+                        idx === 1 ? 'bg-slate-205 border-slate-300 text-slate-800 dark:text-white' :
+                        idx === 2 ? 'bg-amber-700 border-amber-800 text-white' :
+                        'bg-slate-50 dark:bg-slate-950 border-slate-200/40 text-slate-500'
+                      }`}>
+                        {idx + 1}
+                      </span>
+
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-extrabold text-xs text-slate-850 dark:text-white">
+                            {hero.name}
+                          </span>
+                          {isCurrentUser && (
+                            <span className="px-1.5 py-0.2 bg-emerald-500 text-white text-[7.5px] font-black uppercase rounded">
+                              YOU
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[9px] text-slate-400 uppercase font-black tracking-wider block mt-0.5">
+                          Badge: <span className="text-indigo-600 dark:text-indigo-400 font-extrabold">{hero.badge}</span>
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2.5">
+                      <div className="text-right">
+                        <span className="text-xs font-mono font-black text-slate-900 dark:text-white">
+                          {hero.count}
+                        </span>
+                        <span className="text-[8px] text-slate-400 font-extrabold uppercase tracking-wide block">
+                          Assists Resolved
+                        </span>
+                      </div>
+                      
+                      {isCurrentUser && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            haptics.heavy();
+                            const current = localStorage.getItem('user_local_assists_count') ? Number(localStorage.getItem('user_local_assists_count')) : 16;
+                            const newVal = current + 1;
+                            localStorage.setItem('user_local_assists_count', String(newVal));
+                            
+                            // Trigger rewards points increase too
+                            if (profile?.uid) {
+                              try {
+                                const userRef = doc(db, 'users', profile.uid);
+                                updateDoc(userRef, {
+                                  rewardsPoints: (profile.rewardsPoints || 0) + 15,
+                                  carbonSavingsKg: (profile.carbonSavingsKg || 0) + 1.2
+                                });
+                              } catch (e) {}
+                            }
+
+                            // Trigger parent level update
+                            window.dispatchEvent(new CustomEvent('supabase-sync-updated'));
+                            alert("Excellent job! You successfully resolved a neighbor's local support request in Shoreditch! +1 Assist, +15 Rewards, +1.2kg Carbon savings logged.");
+                          }}
+                          className="p-1.5 bg-emerald-500 text-white border-none rounded-xl cursor-pointer hover:bg-emerald-600 active:scale-90 transition-all"
+                          title="Report Local Support Assist Done"
+                        >
+                          <Plus size={12} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Quick Informational Pledge banner */}
+            <div className="p-3 bg-indigo-500/5 dark:bg-slate-950/40 rounded-2xl flex items-center justify-between border border-indigo-500/10">
+              <div className="flex items-center gap-2">
+                <Heart size={14} className="text-indigo-500 animate-pulse" />
+                <span className="text-[10px] font-bold text-slate-650 dark:text-slate-300">
+                  Ready to help a neighbor? Open the Social board to browse posts.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveSegment('community')}
+                className="text-[9px] font-black uppercase text-[#6366f1] border-none bg-transparent hover:underline cursor-pointer"
+              >
+                Browse requests →
               </button>
             </div>
           </section>
@@ -1553,6 +2304,105 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
           <CommunitySafety />
 
           <CommunityPulse />
+
+          {/* Community Impact Leaderboard */}
+          <div className="p-6 bg-white dark:bg-slate-950 border border-slate-100 dark:border-slate-850 rounded-[36px] shadow-sm space-y-5 text-left">
+            <div className="flex justify-between items-center px-1">
+              <div>
+                <h4 className="font-extrabold text-[#111827] dark:text-white text-md tracking-tight flex items-center gap-2">
+                   <Trophy className="text-amber-500 animate-bounce" size={18} />
+                   Community Impact Leaderboard
+                </h4>
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 font-extrabold uppercase tracking-widest mt-0.5">Top Mutual-Aid Contributors</p>
+              </div>
+              <span className="flex items-center justify-center w-8 h-8 rounded-full bg-amber-50 dark:bg-amber-955 text-amber-600 dark:text-amber-400 font-black text-sm">
+                 🏆
+              </span>
+            </div>
+
+            {/* Custom Interactive Timeframe Pill */}
+            <div className="flex bg-slate-50 dark:bg-slate-900 p-1 rounded-2xl border border-slate-100 dark:border-slate-800">
+               <button
+                  type="button"
+                  onClick={() => haptics.light()}
+                  className="flex-1 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-xl transition-all border-none bg-slate-900 text-white dark:bg-indigo-650 cursor-pointer"
+               >
+                  📅 This Month
+               </button>
+               <button
+                  type="button"
+                  onClick={() => haptics.light()}
+                  className="flex-1 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-xl transition-all border-none text-slate-500 dark:text-slate-400 hover:text-slate-800 cursor-pointer bg-transparent"
+               >
+                  👑 All Time
+               </button>
+            </div>
+
+            {/* Leaderboard Ranking List with Badges */}
+            <div className="space-y-3 pt-1">
+               {[
+                  { rank: 1, name: "Kaito Sen (You)", assists: 48, badge: "Civic Archon 🛡️", color: "from-amber-500 to-indigo-600 text-white bg-gradient-to-r shadow-md shadow-amber-500/10" },
+                  { rank: 2, name: "Elara Vance", assists: 41, badge: "Ecosystem Star 🌟", color: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/45 dark:text-emerald-400" },
+                  { rank: 3, name: "Marcus Brody", assists: 34, badge: "Rescue Guard 🏅", color: "bg-sky-50 text-sky-700 dark:bg-sky-950/45 dark:text-sky-400" },
+                  { rank: 4, name: "Suri Jenkins", assists: 26, badge: "Super Neighbor 🤝", color: "bg-rose-50 text-rose-700 dark:bg-rose-950/45 dark:text-rose-450" },
+                  { rank: 5, name: "Aria Patel", assists: 19, badge: "Local Samaritan ❤️", color: "bg-purple-50 text-purple-700 dark:bg-purple-950/45 dark:text-purple-400" }
+               ].map((hero) => (
+                  <motion.div 
+                     key={hero.rank} 
+                     whileHover={{ scale: 1.018, y: -2 }}
+                     whileTap={{ scale: 0.985 }}
+                     className="flex items-center justify-between p-3.5 bg-slate-50 dark:bg-slate-900/40 rounded-2xl hover:bg-slate-100/60 dark:hover:bg-slate-900/80 transition-all border border-slate-50 dark:border-slate-900 flex-row cursor-pointer"
+                  >
+                     <div className="flex items-center gap-3">
+                        {/* Circle Badge with Rank */}
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center font-black text-xs ${
+                           hero.rank === 1 ? 'bg-amber-400 text-slate-900' :
+                           hero.rank === 2 ? 'bg-slate-350 text-slate-800' :
+                           hero.rank === 3 ? 'bg-amber-600/30 text-amber-800' : 'bg-slate-150 text-slate-600 dark:bg-slate-800 dark:text-slate-100'
+                        }`}>
+                           #{hero.rank}
+                        </div>
+                        <div>
+                           <span className="text-[11.5px] font-extrabold text-slate-800 dark:text-slate-200 block">{hero.name}</span>
+                           <span className="text-[9px] text-[#94a3b8] dark:text-slate-500 font-bold uppercase tracking-wider">{hero.assists} civic handshakes completed</span>
+                        </div>
+                     </div>
+                     
+                     {/* Badge Container */}
+                     <span className={`text-[8.5px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full ${hero.color}`}>
+                        {hero.badge}
+                     </span>
+                  </motion.div>
+               ))}
+            </div>
+
+            {/* Quick action: Claim/Volunteer helper */}
+            <div className="pt-2">
+               <button
+                  type="button"
+                  onClick={() => {
+                     haptics.success();
+                     // Display friendly alert or toast
+                     const notificationEvent = new CustomEvent('urbanNet_new_notification', {
+                       detail: {
+                         id: 'volunteer-' + Date.now(),
+                         type: 'service',
+                         title: '💝 Registered Active Helper',
+                         message: 'Thank you! You are officially registered to assist in the upcoming Shoreditch Churchyard Cleanliness drive.',
+                         timestamp: new Date().toLocaleTimeString(),
+                         isRead: false
+                       }
+                     });
+                     window.dispatchEvent(notificationEvent);
+                     alert("Excellent! You are verified to assist the next request near you. You have been awarded +5 Karma Points!");
+                  }}
+                  className="w-full py-3 bg-[#111827] dark:bg-indigo-650 hover:bg-slate-850 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest border-none cursor-pointer active:scale-[0.98] transition-all flex items-center justify-center gap-1.5 shadow-md text-center"
+               >
+                  <Award size={14} />
+                  Volunteer for neighborly support (+5 Karma)
+               </button>
+            </div>
+          </div>
 
           <CommunityBoard />
         </motion.div>
@@ -1766,6 +2616,7 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
     </AnimatePresence>
   </motion.div>
 )}
+      </div>
 
       {/* Interactive Notifications Drawer */}
       <AnimatePresence>
@@ -1848,18 +2699,87 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
                 </div>
               </div>
 
+              {/* Smart Filters & Do Not Disturb controls */}
+              <div className="p-4 bg-white border-b border-slate-100 space-y-3 shrink-0">
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Smart Filters</span>
+                  <div className="flex gap-1 bg-slate-100 p-0.5 rounded-xl">
+                    {(['All', 'Rides', 'Marketplace'] as const).map(f => (
+                      <button
+                        key={f}
+                        onClick={() => { haptics.light(); setNotificationFilter(f); }}
+                        className={`px-2 py-1 text-[8px] font-black uppercase tracking-wider rounded-lg border-none cursor-pointer transition-colors ${
+                          notificationFilter === f 
+                            ? 'bg-indigo-600 text-white shadow-xs' 
+                            : 'bg-transparent text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        {f}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="p-3 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-850 flex flex-col gap-2">
+                  <div className="flex justify-between items-center">
+                    <div className="text-left font-sans">
+                      <span className="text-[10px] font-black uppercase text-slate-705 dark:text-slate-200 flex items-center gap-1.5 leading-none">
+                        <span className={`w-1.5 h-1.5 rounded-full ${dndEnabled ? 'bg-amber-500 animate-pulse' : 'bg-slate-300'}`} />
+                        Do Not Disturb
+                      </span>
+                      <span className="text-[8px] font-bold text-slate-400 block uppercase tracking-wide leading-none mt-1">
+                        Mute selected services dynamically
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={toggleDnd}
+                      className={`px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-widest cursor-pointer border-none transition-all ${
+                        dndEnabled 
+                          ? 'bg-amber-500 text-white' 
+                          : 'bg-slate-205 text-slate-600 dark:bg-slate-800 dark:text-slate-400 hover:bg-slate-300'
+                      }`}
+                    >
+                      {dndEnabled ? '🔔 ACTIVE' : '🔕 INACTIVE'}
+                    </button>
+                  </div>
+
+                  {dndEnabled && (
+                    <div className="flex gap-2 pt-1 border-t border-dashed border-slate-200 dark:border-slate-800 justify-start items-center">
+                      <span className="text-[8px] font-black uppercase text-slate-400">Mute lists:</span>
+                      {['Rides', 'Marketplace'].map(cat => {
+                        const isMuted = dndMutedCategories.includes(cat);
+                        return (
+                          <button
+                            key={cat}
+                            onClick={() => toggleDndMutedCategory(cat)}
+                            className={`px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider border transition-all cursor-pointer ${
+                              isMuted 
+                                ? 'bg-rose-500/10 text-rose-500 border-rose-300/40' 
+                                : 'bg-slate-100 text-slate-400 border-transparent hover:text-slate-700'
+                            }`}
+                          >
+                            {cat} {isMuted ? ' Muted' : ' Alert Active'}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
               {/* Toolbar Actions */}
-              {notifications.length > 0 && (
-                <div className="px-4 py-2 bg-white border-b border-slate-100 flex justify-between items-center text-[10px]">
+              {filteredNotifications.length > 0 && (
+                <div className="px-4 py-2 bg-white border-b border-slate-100 flex justify-between items-center text-[10px] shrink-0">
                   <button 
                     onClick={markAllRead}
-                    className="text-indigo-600 font-extrabold hover:underline uppercase tracking-wider"
+                    className="text-indigo-600 font-extrabold hover:underline uppercase tracking-wider border-none bg-transparent cursor-pointer"
                   >
                     Mark all read
                   </button>
                   <button 
                     onClick={clearAllNotifications}
-                    className="text-slate-400 hover:text-rose-600 font-extrabold hover:underline uppercase tracking-wider flex items-center space-x-1"
+                    className="text-slate-400 hover:text-rose-600 font-extrabold hover:underline uppercase tracking-wider flex items-center space-x-1 border-none bg-transparent cursor-pointer"
                   >
                     <Trash size={10} />
                     <span>Clear all</span>
@@ -1868,17 +2788,17 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
               )}
 
               {/* Notification Item List Container */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar">
-                {notifications.length === 0 ? (
+              <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar pb-10">
+                {filteredNotifications.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center p-6 text-center">
                     <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mb-3 text-slate-400">
                       <Bell size={20} />
                     </div>
                     <p className="font-semibold text-slate-700 text-sm">All caught up!</p>
-                    <p className="text-slate-400 text-xs mt-1">You have no new alerts at the moment. Trigger some sandbox simulations above!</p>
+                    <p className="text-slate-400 text-xs mt-1">No alerts found under this smart filter combination.</p>
                   </div>
                 ) : (
-                  notifications.map(notif => (
+                  filteredNotifications.map(notif => (
                     <div 
                       key={notif.id} 
                       onClick={() => toggleReadStatus(notif.id)}
@@ -2048,7 +2968,10 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
         <motion.button
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
-          onClick={() => setQuickActionsOpen(!quickActionsOpen)}
+          onClick={() => {
+            haptics.light();
+            setQuickActionsOpen(!quickActionsOpen);
+          }}
           className={`w-14 h-14 rounded-full flex items-center justify-center text-white shadow-xl hover:shadow-2xl transition-all cursor-pointer border-none z-40 ${
             quickActionsOpen 
               ? 'bg-slate-900 rotate-45 shadow-slate-900/20' 
@@ -2058,6 +2981,118 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
           <Plus size={28} />
         </motion.button>
       </div>
+
+      {/* 🔮 Active Long-Press Context Menu Modal */}
+      <AnimatePresence>
+        {longPressedItem && (
+          <div className="fixed inset-0 z-[250] flex items-center justify-center p-6 text-left select-none">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setLongPressedItem(null)}
+              className="fixed inset-0 bg-slate-950/65 backdrop-blur-xs"
+            />
+
+            {/* Modal Body Card */}
+            <motion.div
+              layoutId="long-press-context-card"
+              initial={{ scale: 0.9, opacity: 0, y: 15 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 15 }}
+              className="relative bg-white dark:bg-slate-950 border border-slate-100 dark:border-slate-850 p-6 rounded-[36px] shadow-2xl max-w-sm w-full space-y-5 z-[260]"
+            >
+              {/* Heading */}
+              <div className="flex justify-between items-start">
+                <div className="space-y-0.5">
+                  <span className="text-[9px] font-black uppercase text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 dark:text-indigo-400 px-2 py-0.5 rounded border border-indigo-150/40">
+                    Quick Shortcut Menu
+                  </span>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white pt-1">
+                    {longPressedItem.name}
+                  </h3>
+                </div>
+                <button
+                  onClick={() => {
+                    haptics.light();
+                    setLongPressedItem(null);
+                  }}
+                  className="w-7 h-7 rounded-full bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 border-none text-slate-400 hover:text-slate-600 cursor-pointer flex items-center justify-center"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+
+              {/* Description Body */}
+              <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-transparent dark:border-slate-850">
+                <div className="flex items-center space-x-2 mb-1.5 flex-row">
+                  <Info size={12} className="text-indigo-500" />
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                    Service Context & Scope
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-350 leading-relaxed font-bold">
+                  {longPressedItem.details}
+                </p>
+              </div>
+
+              {/* Quick Actions List Column */}
+              <div className="grid grid-cols-1 gap-2">
+                {/* 1. View Details */}
+                <button
+                  id="long-press-action-details"
+                  onClick={() => {
+                    haptics.success();
+                    alert(`🔍 Details Screen Preview\n\nName: ${longPressedItem.name}\nType: ${longPressedItem.type.toUpperCase()}\nStatus: Live nearby & Ready to dispatch\n\nWould you like to search this on the platform? Simply tap Search to start.`);
+                    setLongPressedItem(null);
+                  }}
+                  className="w-full flex items-center justify-between p-3.5 bg-indigo-50 hover:bg-indigo-100/70 border-none h-11 rounded-2xl text-indigo-700 font-extrabold text-[11px] uppercase tracking-wider cursor-pointer transition-colors"
+                >
+                  <span className="flex items-center gap-2">👁️ View Details & Rates</span>
+                  <ArrowRight size={12} />
+                </button>
+
+                {/* 2. Toggle Favorite */}
+                <button
+                  id="long-press-action-favorite"
+                  onClick={() => {
+                    haptics.medium();
+                    handleFavoriteToggle(longPressedItem.name);
+                    setLongPressedItem(null);
+                  }}
+                  className="w-full flex items-center justify-between p-3.5 bg-slate-50 hover:bg-slate-100 border-none h-11 rounded-2xl text-slate-800 dark:text-slate-200 dark:bg-slate-900 dark:hover:bg-slate-850 font-extrabold text-[11px] uppercase tracking-wider cursor-pointer transition-colors"
+                >
+                  <span className="flex items-center gap-2">
+                    <Star size={13} className={favorites.includes(longPressedItem.name) ? "fill-amber-400 text-amber-400" : ""} />
+                    {favorites.includes(longPressedItem.name) ? 'Remove Favorite' : 'Mark as Favorite'}
+                  </span>
+                  <span className="text-[9px] font-medium text-slate-400">Add to Home</span>
+                </button>
+
+                {/* 3. Contact Support */}
+                <button
+                  id="long-press-action-support"
+                  onClick={() => {
+                    haptics.medium();
+                    setLongPressedItem(null);
+                    if ((window as any).__openSupportChat) {
+                      (window as any).__openSupportChat();
+                    }
+                  }}
+                  className="w-full flex items-center justify-between p-3.5 bg-slate-50 hover:bg-slate-100 border-none h-11 rounded-2xl text-slate-800 dark:text-slate-200 dark:bg-slate-900 dark:hover:bg-slate-850 font-extrabold text-[11px] uppercase tracking-wider cursor-pointer transition-colors"
+                >
+                  <span className="flex items-center gap-2">
+                    <PhoneCall size={13} className="text-indigo-500" />
+                    Contact Support Helper
+                  </span>
+                  <span className="text-[9px] font-medium text-slate-400">Live Chat</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

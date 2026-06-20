@@ -41,7 +41,30 @@ service cloud.firestore {
                (!('isOnline' in data) || data.isOnline is bool) &&
                (!('workerType' in data) || data.workerType is string) &&
                (!('rewardsPoints' in data) || data.rewardsPoints is number) &&
-               (!('referralCode' in data) || data.referralCode is string);
+               (!('referralCode' in data) || data.referralCode is string) &&
+               (!('carbonSavingsKg' in data) || data.carbonSavingsKg is number) &&
+               (!('savedAddresses' in data) || data.savedAddresses is list) &&
+               (!('discountBalance' in data) || data.discountBalance is number) &&
+               (!('referredUsersCount' in data) || data.referredUsersCount is number) &&
+               (!('earnedBadges' in data) || data.earnedBadges is list) &&
+               (!('invitedBy' in data) || data.invitedBy is string) &&
+               (!('availabilityStatus' in data) || data.availabilityStatus is string) &&
+               (!('appLanguage' in data) || data.appLanguage is string) &&
+               (!('rating' in data) || data.rating is number) &&
+               (!('reviewCount' in data) || data.reviewCount is number) &&
+               (!('location' in data) || data.location is map) &&
+               (!('priceDropNotificationsEnabled' in data) || data.priceDropNotificationsEnabled is bool) &&
+               (!('quietHoursEnabled' in data) || data.quietHoursEnabled is bool) &&
+               (!('quietHoursStart' in data) || data.quietHoursStart is string) &&
+               (!('quietHoursEnd' in data) || data.quietHoursEnd is string) &&
+               (!('accessibilityFontScale' in data) || data.accessibilityFontScale is string) &&
+               (!('accessibilityHighContrast' in data) || data.accessibilityHighContrast is bool) &&
+               (!('darkMode' in data) || data.darkMode is bool) &&
+               (!('isPremiumWorker' in data) || data.isPremiumWorker is bool) &&
+               (!('premiumExpiryDate' in data) || data.premiumExpiryDate is string) &&
+               (!('skills' in data) || data.skills is list) &&
+               (!('verificationPhoto' in data) || data.verificationPhoto is string) &&
+               (!('featured' in data) || data.featured is bool);
       }
 
       allow get: if isSignedIn();
@@ -54,7 +77,13 @@ service cloud.firestore {
           'workerType', 'isWorker', 'isOnline', 'updatedAt', 'savedItems',
           'verificationStatus', 'verificationStep', 'documents', 'hourlyRate',
           'isWorkerMode', 'autoAcceptConfig', 'rewardsPoints', 'referralCode',
-          'dateOfBirth', 'gender', 'bio'
+          'dateOfBirth', 'gender', 'bio', 'carbonSavingsKg', 'savedAddresses',
+          'discountBalance', 'referredUsersCount', 'earnedBadges', 'invitedBy',
+          'availabilityStatus', 'appLanguage', 'rating', 'reviewCount', 'location',
+          'priceDropNotificationsEnabled', 'quietHoursEnabled', 'quietHoursStart',
+          'quietHoursEnd', 'accessibilityFontScale', 'accessibilityHighContrast',
+          'darkMode', 'isPremiumWorker', 'premiumExpiryDate', 'skills', 
+          'verificationPhoto', 'featured'
         ]) &&
         // Security Guard: Prevent user from self-verifying to 'verified'
         (
@@ -232,6 +261,46 @@ service cloud.firestore {
     match /rentals/{rentalId} {
       allow read: if isSignedIn();
       allow create, update: if isSignedIn();
+    }
+
+    // 12. HMRC Logs Rules
+    match /hmrc_logs/{logId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 13. Contractor CRM Rules
+    match /contractor_crm/{crmId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 14. Discussions Rules
+    match /discussions/{discussionId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 15. Safety Alerts Rules
+    match /safety_alerts/{alertId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 16. Community Pulse Rules
+    match /community_pulse/{pulseId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 17. Community Chats Rules
+    match /community_chats/{chatId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 18. Feedback Rules
+    match /feedback/{feedbackId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 19. Audit Logs Rules
+    match /audit_logs/{logId} {
+      allow read, write: if isSignedIn();
     }
   }
 }
