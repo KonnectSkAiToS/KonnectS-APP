@@ -357,8 +357,12 @@ export function SettingsEditor() {
     return localStorage.getItem('predictive_sync_mode') || 'adaptive_eco';
   });
   const [importedVoiceShortcuts, setImportedVoiceShortcuts] = useState<string[]>(() => {
-    const val = localStorage.getItem('imported_voice_shortcuts');
-    return val ? JSON.parse(val) : ['book_taxi_home', 'check_today_earnings'];
+    try {
+      const val = localStorage.getItem('imported_voice_shortcuts');
+      return val ? JSON.parse(val) : ['book_taxi_home', 'check_today_earnings'];
+    } catch {
+      return ['book_taxi_home', 'check_today_earnings'];
+    }
   });
 
   // 9. Support FAQ & Help Center
@@ -1499,6 +1503,44 @@ export function SettingsEditor() {
                     </button>
                   </div>
                   ))}
+              </div>
+            </div>
+
+            {/* Clear Local Cache zone */}
+            <div className="pt-4 border-t border-slate-100 dark:border-slate-850 space-y-3 text-left">
+              <span className="text-xs font-black text-slate-405 uppercase tracking-widest block font-mono">Device Storage & Cache Management</span>
+              <div className="p-5 bg-gradient-to-br from-indigo-50/20 to-slate-50 border border-slate-150 rounded-3xl space-y-4">
+                <div className="flex items-center space-x-2">
+                  <Database className="text-indigo-600 dark:text-indigo-400" size={16} />
+                  <span className="text-xs font-extrabold text-slate-800 dark:text-white">Local Cache Purge utility</span>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed font-semibold">
+                  Selectively purge expired marketplace image assets, temporary log buffers, and voice transaction records to reclaim device storage.
+                </p>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    onClick={() => {
+                      haptics.heavy();
+                      localStorage.removeItem('marketplace_viewed_images_cache');
+                      localStorage.removeItem('cached_services_images');
+                      triggerSaveNotification('✓ Purged expired marketplace image assets. Reclaimed ~2.4MB storage.');
+                    }}
+                    className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 rounded-2xl text-[10px] font-black uppercase tracking-wider text-slate-700 dark:text-slate-200 transition-all cursor-pointer"
+                  >
+                    Purge Image Assets
+                  </button>
+                  <button
+                    onClick={() => {
+                      haptics.heavy();
+                      localStorage.removeItem('global_voice_command_history');
+                      localStorage.removeItem('systems_diagnostic_logs');
+                      triggerSaveNotification('✓ Purged temporary diagnostic logs. Reclaimed ~450KB storage.');
+                    }}
+                    className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 rounded-2xl text-[10px] font-black uppercase tracking-wider text-slate-700 dark:text-slate-200 transition-all cursor-pointer"
+                  >
+                    Purge Temp Logs
+                  </button>
+                </div>
               </div>
             </div>
           </div>

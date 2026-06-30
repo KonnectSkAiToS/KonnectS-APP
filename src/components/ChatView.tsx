@@ -3,12 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { collection, query, where, orderBy, onSnapshot, limit, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { ChatMessage } from '../types';
 import { sendMessageSafely } from '../services/chatService';
+import { getQuickReplies } from '../services/geminiService';
 import { haptics } from '../utils/haptics';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, ArrowLeft, ShieldCheck, User, X, Sparkles, Scale, AlertTriangle, Percent, ShieldAlert, Volume2, VolumeX, Users, MessageSquare, Compass, Shield, Upload, Video, Image, FileText, CheckCircle2 } from 'lucide-react';
@@ -51,6 +52,8 @@ export function ChatView({ recipientId, recipientName, onBack }: ChatViewProps) 
   const [activeRecipient, setActiveRecipient] = useState<any | null>(recipientId ? {id: recipientId, name: recipientName, isCommunity: false} : null);
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [suggestedReplies, setSuggestedReplies] = useState<string[]>([]);
+  const [isRepliesLoading, setIsRepliesLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Community Chat variables
@@ -252,10 +255,19 @@ export function ChatView({ recipientId, recipientName, onBack }: ChatViewProps) 
     return () => unsubscribe();
   }, [user?.uid]);
 
+  const formatTime = useCallback((ts: any) => {
+    if (!ts) return '';
+    const date = ts.toDate ? ts.toDate() : new Date(ts);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }, []);
+
   // Fetch specific thread
   useEffect(() => {
+    let active = true;
     if (!user?.uid || !activeRecipient) {
-      setMessages([]);
+      Promise.resolve().then(() => {
+        if (active) setMessages([]);
+      });
       return;
     }
 
@@ -282,7 +294,10 @@ export function ChatView({ recipientId, recipientName, onBack }: ChatViewProps) 
         console.error("Community chat fetch failed, using fallback state:", error);
       });
 
-      return () => unsubscribe();
+      return () => {
+        active = false;
+        unsubscribe();
+      };
     } else {
       const roomId = [user.uid, activeRecipient.id].sort().join('_');
 
@@ -301,21 +316,57 @@ export function ChatView({ recipientId, recipientName, onBack }: ChatViewProps) 
         console.error("Chat fetch failed", error);
       });
 
-      return () => unsubscribe();
+      return () => {
+        active = false;
+        unsubscribe();
+      };
     }
-  }, [user?.uid, activeRecipient?.id]);
+  }, [user?.uid, activeRecipient?.id, formatTime]);
+
+  useEffect(() => {
+    // Generate suggested quick replies if the last message is from the other person
+    let active = true;
+    if (messages.length > 0) {
+      const lastMsg = messages[messages.length - 1];
+      const isFromMe = lastMsg.senderId === user?.uid;
+      
+      if (!isFromMe && lastMsg.text) {
+        Promise.resolve().then(() => {
+          if (active) setIsRepliesLoading(true);
+        });
+        getQuickReplies(lastMsg.text)
+          .then(replies => {
+            if (active) {
+              setSuggestedReplies(replies);
+              setIsRepliesLoading(false);
+            }
+          })
+          .catch(() => {
+            if (active) {
+              setSuggestedReplies([]);
+              setIsRepliesLoading(false);
+            }
+          });
+      } else {
+        Promise.resolve().then(() => {
+          if (active) setSuggestedReplies([]);
+        });
+      }
+    } else {
+      Promise.resolve().then(() => {
+        if (active) setSuggestedReplies([]);
+      });
+    }
+    return () => {
+      active = false;
+    };
+  }, [messages, user?.uid]);
 
   useEffect(() => {
     if (scrollRef.current && view === 'thread') {
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
     }
   }, [messages, communityServerMessages, view]);
-
-  const formatTime = (ts: any) => {
-    if (!ts) return '';
-    const date = ts.toDate ? ts.toDate() : new Date(ts);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
 
   const speakMessageSent = () => {
     const synth = window.speechSynthesis;
@@ -619,6 +670,27 @@ export function ChatView({ recipientId, recipientName, onBack }: ChatViewProps) 
           })
         )}
       </div>
+
+      {/* Quick Replies Carousel */}
+      {suggestedReplies.length > 0 && (
+        <div className="px-4 py-2 bg-slate-50 border-t border-slate-100 flex items-center space-x-2 overflow-x-auto no-scrollbar">
+          <span className="text-[8px] font-black uppercase text-indigo-500 tracking-wider flex items-center shrink-0">
+            <Sparkles size={10} className="mr-1 animate-pulse" /> AI Suggests:
+          </span>
+          {suggestedReplies.map((reply, index) => (
+            <button
+              key={index}
+              onClick={() => {
+                haptics.light();
+                setInput(reply);
+              }}
+              className="px-3 py-1.5 bg-white hover:bg-slate-100 border border-slate-200/60 rounded-full text-xs font-semibold text-slate-700 whitespace-nowrap active:scale-95 transition-all cursor-pointer shadow-sm"
+            >
+              {reply}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Input */}
       <div className="p-4 bg-white border-t border-slate-100 flex items-center space-x-2">

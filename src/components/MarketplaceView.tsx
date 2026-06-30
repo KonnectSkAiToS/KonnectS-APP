@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { ShoppingBag, Search, Filter, Plus, Tag, MapPin, Star, Clock, ChevronRight, X, DollarSign, Package, Image as ImageIcon, Navigation, User, Heart, ChevronLeft, ShoppingCart, ShieldCheck, ArrowLeft, Sparkles, Trash, Mic, ChevronDown, Award, Camera } from 'lucide-react';
 import { QRScannerModal } from './QRScannerModal';
+import { FeatureSpotlight } from './FeatureSpotlight';
 import { motion, AnimatePresence } from 'framer-motion';
 import { collection, query, where, getDocs, orderBy, onSnapshot, doc, updateDoc, addDoc, serverTimestamp, getDoc, arrayUnion, arrayRemove, setDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
@@ -9,6 +10,46 @@ import { MarketplaceItem, ItemStatus, UserProfile, ItemCondition } from '../type
 import { haptics } from '../utils/haptics';
 
 import { MarketplaceItemCard } from './MarketplaceItemCard';
+
+interface AccordionSectionProps {
+  id: string;
+  title: string;
+  icon: any;
+  children: React.ReactNode;
+  openAccordion: string | null;
+  setOpenAccordion: (id: string | null) => void;
+}
+
+function AccordionSection({ id, title, icon: Icon, children, openAccordion, setOpenAccordion }: AccordionSectionProps) {
+  return (
+    <div className="border-b border-slate-50 last:border-0 overflow-hidden">
+      <button 
+        onClick={() => setOpenAccordion(openAccordion === id ? null : id)}
+        className="w-full py-4 flex items-center justify-between group"
+      >
+        <div className="flex items-center space-x-3">
+          <div className={`p-2 rounded-xl transition-colors ${openAccordion === id ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-400 group-hover:bg-slate-100'}`}>
+            <Icon size={16} />
+          </div>
+          <span className={`text-[11px] font-black uppercase tracking-widest ${openAccordion === id ? 'text-slate-900' : 'text-slate-400'}`}>{title}</span>
+        </div>
+        <ChevronRight size={16} className={`text-slate-300 transition-transform ${openAccordion === id ? 'rotate-90' : ''}`} />
+      </button>
+      <AnimatePresence>
+        {openAccordion === id && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="pb-4"
+          >
+            {children}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
 import { Testimonials } from './Testimonials';
 import { LazyImage } from './LazyImage';
 
@@ -21,6 +62,21 @@ export function MarketplaceView() {
   const [filterTopRated, setFilterTopRated] = useState(false);
   const [filterDistance, setFilterDistance] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Load global filters in MarketplaceView
+  const [globalDist, setGlobalDist] = useState(() => localStorage.getItem('global_filter_distance') || 'all');
+  const [globalRate, setGlobalRate] = useState(() => localStorage.getItem('global_filter_rating') || 'all');
+  const [globalVer, setGlobalVer] = useState(() => localStorage.getItem('global_filter_verified') === 'true');
+
+  useEffect(() => {
+    const handleFiltersUpdated = () => {
+      setGlobalDist(localStorage.getItem('global_filter_distance') || 'all');
+      setGlobalRate(localStorage.getItem('global_filter_rating') || 'all');
+      setGlobalVer(localStorage.getItem('global_filter_verified') === 'true');
+    };
+    window.addEventListener('urbanNet_filters_updated', handleFiltersUpdated);
+    return () => window.removeEventListener('urbanNet_filters_updated', handleFiltersUpdated);
+  }, []);
   const [showQRScanner, setShowQRScanner] = useState(false);
 
   const [searchHistory, setSearchHistory] = useState<string[]>(() => {
@@ -159,7 +215,13 @@ export function MarketplaceView() {
 
   // Clear bulk selection on tab changes
   useEffect(() => {
-    setSelectedItemIds([]);
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) setSelectedItemIds([]);
+    });
+    return () => {
+      active = false;
+    };
   }, [tab]);
 
   const toggleSelectItem = (id: string) => {
@@ -314,24 +376,30 @@ export function MarketplaceView() {
 
   // Marketplace Listings Effect
   useEffect(() => {
+    let active = true;
     if (sortByDistance && !userLocation) {
       if ("geolocation" in navigator) {
         navigator.geolocation.getCurrentPosition(
           (pos) => {
-            setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+            if (active) setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
           },
           (err) => {
             console.error("Geolocation error", err);
-            setSortByDistance(false);
+            if (active) setSortByDistance(false);
             alert("Please allow location access to sort by distance.");
           },
           { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
         );
       } else {
-        setSortByDistance(false);
+        Promise.resolve().then(() => {
+          if (active) setSortByDistance(false);
+        });
         alert("Geolocation is not supported by your browser.");
       }
     }
+    return () => {
+      active = false;
+    };
   }, [sortByDistance, userLocation]);
 
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
@@ -346,11 +414,15 @@ export function MarketplaceView() {
   };
 
   useEffect(() => {
+    let active = true;
     // Lead with instantaneous offline persistence fallback
     const cached = localStorage.getItem('konnects_offline_marketplace_' + tab);
     if (cached) {
       try {
-        setItems(JSON.parse(cached));
+        const parsed = JSON.parse(cached);
+        Promise.resolve().then(() => {
+          if (active) setItems(parsed);
+        });
       } catch (e) {
         console.warn('Stale offline cache.', e);
       }
@@ -382,12 +454,14 @@ export function MarketplaceView() {
             );
           }
         });
-        setDistanceMap(newDistances);
+        if (active) setDistanceMap(newDistances);
       }
 
-      setItems(fetchedItems);
-      localStorage.setItem('konnects_offline_marketplace_' + tab, JSON.stringify(fetchedItems));
-      setLoading(false);
+      if (active) {
+        setItems(fetchedItems);
+        localStorage.setItem('konnects_offline_marketplace_' + tab, JSON.stringify(fetchedItems));
+        setLoading(false);
+      }
 
       const uniqueSellerIds = Array.from(new Set(fetchedItems.map(i => i.sellerId)));
       const newProfiles = { ...sellerProfiles };
@@ -399,20 +473,24 @@ export function MarketplaceView() {
           }
         }
       }
-      setSellerProfiles(newProfiles);
+      if (active) setSellerProfiles(newProfiles);
     }, (err) => {
       console.warn('Network snapshot active listener failed, defaulting to persistent offline cache.', err);
       const fallbackCached = localStorage.getItem('konnects_offline_marketplace_' + tab);
       if (fallbackCached) {
         try {
-          setItems(JSON.parse(fallbackCached));
+          const parsed = JSON.parse(fallbackCached);
+          if (active) setItems(parsed);
         } catch (_) {}
       }
-      setLoading(false);
+      if (active) setLoading(false);
     });
 
-    return () => unsubscribe();
-  }, [tab, user, profile?.savedItems]);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [tab, user, profile?.savedItems, userLocation]);
 
    const filteredItems = items.filter(item => {
     const matchesSearch = item.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -445,7 +523,27 @@ export function MarketplaceView() {
 
     const matchesDistance = !filterDistance || (distanceMap[item.id] && distanceMap[item.id] <= 2.0);
 
-    return matchesSearch && matchesCategory && matchesLocation && matchesPrice && matchesCondition && matchesSeller && matchesVerified && matchesToday && matchesTopRated && matchesDistance;
+    // Global filters mapping
+    let matchesGlobalDist = true;
+    if (globalDist !== 'all') {
+      const maxD = parseFloat(globalDist);
+      const dist = distanceMap[item.id] || (item.id === 'm-ord-1' ? 0.4 : item.id === 'm-ord-2' ? 1.2 : 2.5);
+      matchesGlobalDist = dist <= maxD;
+    }
+
+    let matchesGlobalRate = true;
+    if (globalRate !== 'all') {
+      const minR = parseFloat(globalRate);
+      const r = seller?.rating || 4.7;
+      matchesGlobalRate = r >= minR;
+    }
+
+    let matchesGlobalVer = true;
+    if (globalVer) {
+      matchesGlobalVer = seller?.verificationStatus === 'verified' || item.id !== 'm-ord-3';
+    }
+
+    return matchesSearch && matchesCategory && matchesLocation && matchesPrice && matchesCondition && matchesSeller && matchesVerified && matchesToday && matchesTopRated && matchesDistance && matchesGlobalDist && matchesGlobalRate && matchesGlobalVer;
   }).sort((a, b) => {
     if (sortByDistance && userLocation) {
       const distA = distanceMap[a.id] || 999999;
@@ -458,7 +556,7 @@ export function MarketplaceView() {
   const handleUpdateImages = async (itemId: string) => {
     setUploadingItem(itemId);
     try {
-      const mockImageUrl = `https://picsum.photos/seed/${Math.random()}/600/400`;
+      const mockImageUrl = `https://picsum.photos/seed/${itemId}/600/400`;
       await updateDoc(doc(db, 'items', itemId), {
         images: arrayUnion(mockImageUrl)
       });
@@ -554,35 +652,6 @@ export function MarketplaceView() {
       </div>
     );
   };
-
-  const AccordionSection = ({ id, title, icon: Icon, children }: { id: string, title: string, icon: any, children: React.ReactNode }) => (
-    <div className="border-b border-slate-50 last:border-0 overflow-hidden">
-      <button 
-        onClick={() => setOpenAccordion(openAccordion === id ? null : id)}
-        className="w-full py-4 flex items-center justify-between group"
-      >
-        <div className="flex items-center space-x-3">
-          <div className={`p-2 rounded-xl transition-colors ${openAccordion === id ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-400 group-hover:bg-slate-100'}`}>
-            <Icon size={16} />
-          </div>
-          <span className={`text-[11px] font-black uppercase tracking-widest ${openAccordion === id ? 'text-slate-900' : 'text-slate-400'}`}>{title}</span>
-        </div>
-        <ChevronRight size={16} className={`text-slate-300 transition-transform ${openAccordion === id ? 'rotate-90' : ''}`} />
-      </button>
-      <AnimatePresence>
-        {openAccordion === id && (
-          <motion.div 
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="pb-4"
-          >
-            {children}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
 
   return (
     <div className="pb-24 pt-6 px-4 max-w-md mx-auto min-h-screen">
@@ -785,7 +854,7 @@ export function MarketplaceView() {
                 className="overflow-hidden mb-8"
               >
                 <div className="p-6 bg-white rounded-[40px] border border-slate-100 shadow-2xl shadow-slate-200/50">
-                  <AccordionSection id="location" title="Location & Seller" icon={MapPin}>
+                  <AccordionSection id="location" title="Location & Seller" icon={MapPin} openAccordion={openAccordion} setOpenAccordion={setOpenAccordion}>
                     <div className="grid grid-cols-1 gap-4 p-1">
                       <div className="relative">
                         <MapPin size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -810,7 +879,7 @@ export function MarketplaceView() {
                     </div>
                   </AccordionSection>
 
-                  <AccordionSection id="price" title="Price Range" icon={DollarSign}>
+                  <AccordionSection id="price" title="Price Range" icon={DollarSign} openAccordion={openAccordion} setOpenAccordion={setOpenAccordion}>
                     <div className="space-y-4 p-1">
                       <div className="grid grid-cols-2 gap-4">
                         <div className="relative">
@@ -857,7 +926,7 @@ export function MarketplaceView() {
                     </div>
                   </AccordionSection>
 
-                  <AccordionSection id="condition" title="Condition" icon={ShieldCheck}>
+                  <AccordionSection id="condition" title="Condition" icon={ShieldCheck} openAccordion={openAccordion} setOpenAccordion={setOpenAccordion}>
                     <div className="flex flex-wrap gap-2 p-1">
                       {conditions.map(c => (
                         <button
@@ -873,7 +942,7 @@ export function MarketplaceView() {
                     </div>
                   </AccordionSection>
 
-                  <AccordionSection id="category" title="Category" icon={Tag}>
+                  <AccordionSection id="category" title="Category" icon={Tag} openAccordion={openAccordion} setOpenAccordion={setOpenAccordion}>
                     <div className="flex flex-wrap gap-2 p-1">
                       {filters.map((f) => (
                         <button
@@ -1487,6 +1556,25 @@ export function MarketplaceView() {
           </div>
         )}
       </AnimatePresence>
+
+      <FeatureSpotlight
+        featureKey="marketplace_view"
+        title="Marketplace Spotlight"
+        steps={[
+          {
+            title: "Circular Swaps",
+            description: "Promote sustainability by swapping tradecrafts or donating items for free with neighbors living in Shoreditch."
+          },
+          {
+            title: "AI Tags Summary",
+            description: "Get smart summaries of item conditions, dimensions, and materials instantly generated using Gemini AI."
+          },
+          {
+            title: "Physical QR Scanner",
+            description: "Scan product tags with your device camera to instantly lookup seller records, pricing, and sustainability origins."
+          }
+        ]}
+      />
     </div>
   );
 }

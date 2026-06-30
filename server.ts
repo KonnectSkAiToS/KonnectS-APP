@@ -952,6 +952,109 @@ Respond with a raw JSON object matching this schema:
     }
   });
 
+  app.post("/api/gemini/quick-reply", async (req, res) => {
+    const { lastMessage } = req.body;
+    try {
+      if (!process.env.GEMINI_API_KEY) {
+        // Fallback offline suggested replies
+        const lower = (lastMessage || '').toLowerCase();
+        if (lower.includes('price') || lower.includes('cost') || lower.includes('much')) {
+          return res.json({ replies: ["Is the price negotiable?", "That works for me!", "Can you do a bit less?"] });
+        }
+        if (lower.includes('when') || lower.includes('time') || lower.includes('arrive')) {
+          return res.json({ replies: ["I can be there in 15 mins.", "How about tomorrow morning?", "Can we meet at 2 PM?"] });
+        }
+        return res.json({ replies: ["Sounds good, deal!", "Could you send more details?", "I'll let you know soon."] });
+      }
+
+      const aiClient = getAI();
+      const prompt = `Based on the following last message received from a user, generate exactly 3 very brief and highly contextual suggested "quick-reply" responses.
+Last message: "${lastMessage}"
+
+Return a raw JSON object matching this schema:
+{
+  "replies": ["reply 1", "reply 2", "reply 3"]
+}`;
+
+      const response = await aiClient.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              replies: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: "Exactly 3 concise suggested replies (max 6 words each)."
+              }
+            },
+            required: ["replies"]
+          }
+        }
+      });
+
+      const parsed = JSON.parse((response.text || "{}").trim());
+      res.json(parsed);
+    } catch (err) {
+      console.error("Quick replies error, using fallback:", err);
+      res.json({ replies: ["Sounds good, deal!", "Could you send more details?", "I'll let you know soon."] });
+    }
+  });
+
+  app.post("/api/gemini/review-summary", async (req, res) => {
+    const { reviews = [] } = req.body;
+    try {
+      if (!process.env.GEMINI_API_KEY || reviews.length === 0) {
+        return res.json({
+          summary: "Highly rated local service provider with consistent praise for prompt communication and transparent pricing.",
+          highlights: ["Reliable", "Fair Pricing", "Responsive"]
+        });
+      }
+
+      const aiClient = getAI();
+      const prompt = `Analyze these customer reviews for a service provider or marketplace seller, and distill them into a concise 1-sentence summary and exactly 3 single-word or two-word tag highlights (e.g., 'Reliable', 'Fair Pricing', 'Responsive', 'Polite', 'Quick Turnaround').
+Reviews:
+${JSON.stringify(reviews)}
+
+Return a raw JSON object matching this schema:
+{
+  "summary": "1-sentence summary",
+  "highlights": ["highlight 1", "highlight 2", "highlight 3"]
+}`;
+
+      const response = await aiClient.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              summary: { type: Type.STRING, description: "A concise, professional 1-sentence summary highlighting the feedback trend." },
+              highlights: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: "Exactly 3 distinct highlights."
+              }
+            },
+            required: ["summary", "highlights"]
+          }
+        }
+      });
+
+      const parsed = JSON.parse((response.text || "{}").trim());
+      res.json(parsed);
+    } catch (err) {
+      console.error("Review summary error, using fallback:", err);
+      res.json({
+        summary: "Highly rated local service provider with consistent praise for prompt communication and transparent pricing.",
+        highlights: ["Reliable", "Fair Pricing", "Responsive"]
+      });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

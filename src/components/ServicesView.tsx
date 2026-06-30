@@ -21,6 +21,8 @@ import { SpatialARScannerModal } from './SpatialARScannerModal';
 import { haptics } from '../utils/haptics';
 import { CalendarSyncManager } from '../services/calendarService';
 import { QRScannerModal } from './QRScannerModal';
+import { FeatureSpotlight } from './FeatureSpotlight';
+import { getReviewSummary } from '../services/geminiService';
 import { Camera } from 'lucide-react';
 
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_PLATFORM_KEY || '';
@@ -88,6 +90,65 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
   const [loading, setLoading] = useState(true);
   const [showARScanModal, setShowARScanModal] = useState(false);
   const [roomScanData, setRoomScanData] = useState<any | null>(null);
+  const [reviewSummary, setReviewSummary] = useState<{ summary: string, highlights: string[] } | null>(null);
+  const [isReviewSummaryLoading, setIsReviewSummaryLoading] = useState(false);
+  const [selectedQuickTip, setSelectedQuickTip] = useState<{ role: string, name: string, tip: string } | null>(null);
+  const [hiddenProIds, setHiddenProIds] = useState<string[]>([]);
+
+  const getImprovementTip = (role: string) => {
+    const r = role.toLowerCase();
+    if (r.includes('physician') || r.includes('nurse') || r.includes('healthcare')) {
+      return "List your active DBS verification certificate number clearly in your profile bio and display verified NHS or GMC registration credentials to boost trust by 85%.";
+    }
+    if (r.includes('engineer') || r.includes('cybersecurity') || r.includes('technology')) {
+      return "Showcase a link to your GitHub portfolio, include key tech-stack tags, and highlight experience with local AI integrations to attract high-budget startups.";
+    }
+    if (r.includes('electrician') || r.includes('plumber') || r.includes('trades')) {
+      return "Keep your standard hourly rates competitive for Central London, update availability in real-time, and guarantee a 1-hour fast emergency response window.";
+    }
+    if (r.includes('chef') || r.includes('hospitality')) {
+      return "Add high-resolution photos of food hygiene certification ratings and clear menu tier prices to simplify the booking flow for private local events.";
+    }
+    return "List your active business or professional certifications, state minimum callout fees upfront, and request instant feedback from past Shoreditch clients.";
+  };
+
+  useEffect(() => {
+    let active = true;
+    if (selectedService) {
+      Promise.resolve().then(() => {
+        if (active) setIsReviewSummaryLoading(true);
+      });
+      const reviews = [
+        `Excellent work by ${selectedService.proName || 'Specialist'}! Extremely skilled and professional.`,
+        `Very satisfied with the ${selectedService.name} service. Explained everything clearly.`,
+        `Arrived right on time and sorted out the issue quickly. Highly recommend!`,
+        `Fair pricing and great communication throughout. Will use again.`
+      ];
+      getReviewSummary(reviews)
+        .then(summary => {
+          if (active) {
+            setReviewSummary(summary);
+            setIsReviewSummaryLoading(false);
+          }
+        })
+        .catch(() => {
+          if (active) {
+            setReviewSummary({
+              summary: "Highly rated local service provider with consistent praise for prompt communication and transparent pricing.",
+              highlights: ["Reliable", "Fair Pricing", "Responsive"]
+            });
+            setIsReviewSummaryLoading(false);
+          }
+        });
+    } else {
+      Promise.resolve().then(() => {
+        if (active) setReviewSummary(null);
+      });
+    }
+    return () => {
+      active = false;
+    };
+  }, [selectedService]);
 
   const getAISuggestions = (serviceName: string) => {
     const norm = (serviceName || '').toLowerCase();
@@ -142,6 +203,21 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
   const [filterToday, setFilterToday] = useState(false);
   const [filterTopRated, setFilterTopRated] = useState(false);
   const [filterDistance, setFilterDistance] = useState(false);
+
+  // Load global filters in ServicesView
+  const [globalDist, setGlobalDist] = useState(() => localStorage.getItem('global_filter_distance') || 'all');
+  const [globalRate, setGlobalRate] = useState(() => localStorage.getItem('global_filter_rating') || 'all');
+  const [globalVer, setGlobalVer] = useState(() => localStorage.getItem('global_filter_verified') === 'true');
+
+  useEffect(() => {
+    const handleFiltersUpdated = () => {
+      setGlobalDist(localStorage.getItem('global_filter_distance') || 'all');
+      setGlobalRate(localStorage.getItem('global_filter_rating') || 'all');
+      setGlobalVer(localStorage.getItem('global_filter_verified') === 'true');
+    };
+    window.addEventListener('urbanNet_filters_updated', handleFiltersUpdated);
+    return () => window.removeEventListener('urbanNet_filters_updated', handleFiltersUpdated);
+  }, []);
 
   // Hands-free voice speech search states
   const [isListeningVoice, setIsListeningVoice] = useState(false);
@@ -220,13 +296,30 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
   };
 
   const [showRoleDictionary, setShowRoleDictionary] = useState(false);
+  const [showSpotlight, setShowSpotlight] = useState(false);
 
   useEffect(() => {
-    setLoading(true);
+    const hasSeen = localStorage.getItem('konnects_spotlight_services_seen') === 'true';
+    if (!hasSeen) {
+      const timer = setTimeout(() => {
+        setShowSpotlight(true);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) setLoading(true);
+    });
     const timer = setTimeout(() => {
-      setLoading(false);
+      if (active) setLoading(false);
     }, 700);
-    return () => clearTimeout(timer);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
   }, [activeSector, searchQuery]);
 
   // Map representation of locations
@@ -267,7 +360,9 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
     (window as any).gm_authFailure = () => {
       console.warn("Google Maps Auth Failure intercepted in ServicesView. Enabling Vector Map Failsafe Mode.");
       (window as any).gmapsHasFailed = true;
-      setMapLoadError(true);
+      Promise.resolve().then(() => {
+        setMapLoadError(true);
+      });
       if (originalAuthFailure) {
         try { originalAuthFailure(); } catch (e) {}
       }
@@ -278,14 +373,18 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
       const msg = args.map(arg => String(arg)).join(' ');
       if (msg.includes('ApiProjectMapError') || msg.includes('Google Maps') || msg.includes('google.maps')) {
         (window as any).gmapsHasFailed = true;
-        setMapLoadError(true);
+        Promise.resolve().then(() => {
+          setMapLoadError(true);
+        });
       }
       originalConsoleError.apply(console, args);
     };
 
     if (!GOOGLE_MAPS_API_KEY) {
       (window as any).gmapsHasFailed = true;
-      setMapLoadError(true);
+      Promise.resolve().then(() => {
+        setMapLoadError(true);
+      });
     }
 
     return () => {
@@ -439,8 +538,11 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
 
   // Global search event listener
   useEffect(() => {
+    let active = true;
     if ((window as any).__globalSearchTerm) {
-      setSearchQuery((window as any).__globalSearchTerm);
+      Promise.resolve().then(() => {
+        if (active) setSearchQuery((window as any).__globalSearchTerm);
+      });
     }
     const handleGlobalSearch = (e: Event) => {
       const customEvent = e as CustomEvent;
@@ -450,7 +552,10 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
       }
     };
     window.addEventListener('global-search', handleGlobalSearch);
-    return () => window.removeEventListener('global-search', handleGlobalSearch);
+    return () => {
+      active = false;
+      window.removeEventListener('global-search', handleGlobalSearch);
+    };
   }, []);
 
   // Enhanced Booking State
@@ -553,11 +658,32 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
 
   // Live filter and generate workers
   const visibleProfessionals = useMemo(() => {
-    let base = [...SEEDED_PROFESSIONALS];
+    let base = [...SEEDED_PROFESSIONALS].filter(p => !hiddenProIds.includes(p.id));
 
     // Filter by sector tab
     if (activeSector !== 'all') {
       base = base.filter(p => p.category === activeSector);
+    }
+
+    // Apply Global Distance Filter
+    if (globalDist !== 'all') {
+      const distLimit = parseFloat(globalDist);
+      base = base.filter(p => {
+        // Map locations to simulated distances
+        const dist = p.id === 'spro-1' ? 0.3 : p.id === 'spro-2' ? 0.8 : p.id === 'spro-3' ? 1.5 : p.id === 'spro-4' ? 4.2 : p.id === 'spro-5' ? 3.1 : p.id === 'spro-6' ? 0.6 : p.id === 'spro-7' ? 5.5 : p.id === 'spro-8' ? 1.9 : p.id === 'spro-9' ? 2.1 : 2.8;
+        return dist <= distLimit;
+      });
+    }
+
+    // Apply Global Rating Filter
+    if (globalRate !== 'all') {
+      const minRate = parseFloat(globalRate);
+      base = base.filter(p => p.rating >= minRate);
+    }
+
+    // Apply Global Verified Status Filter (spro-4 and spro-7 are simulated as unverified)
+    if (globalVer) {
+      base = base.filter(p => p.id !== 'spro-4' && p.id !== 'spro-7');
     }
 
     // Filter by text search
@@ -637,7 +763,7 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
     }
 
     return base;
-  }, [activeSector, searchQuery, filterToday, filterTopRated, filterDistance]);
+  }, [activeSector, searchQuery, filterToday, filterTopRated, filterDistance, hiddenProIds]);
 
   return (
     <div className="pb-24 pt-6 px-4 max-w-md mx-auto min-h-screen">
@@ -657,6 +783,45 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
           <Camera size={20} />
         </button>
       </header>
+
+      {/* Feature Spotlight Card */}
+      <AnimatePresence>
+        {showSpotlight && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            className="mb-6 p-5 bg-gradient-to-r from-indigo-950 to-slate-900 text-white rounded-3xl border border-indigo-500/30 shadow-xl relative overflow-hidden"
+          >
+            <div className="absolute -top-10 -right-10 w-24 h-24 bg-indigo-500/25 rounded-full blur-xl pointer-events-none" />
+            <div className="flex items-start space-x-3 relative z-10">
+              <div className="p-2 bg-indigo-500/20 text-indigo-300 rounded-xl mt-0.5">
+                <Sparkles size={16} className="animate-pulse" />
+              </div>
+              <div className="flex-1 text-left">
+                <h4 className="text-xs font-black uppercase tracking-wider text-indigo-300">Feature Spotlight: Services Hub</h4>
+                <p className="text-[11px] text-slate-200 mt-1.5 font-medium leading-relaxed font-sans">
+                  Welcome to Services! You can search vetted trade professionals (like plumbers or nurses), use <span className="font-bold text-indigo-300">Hands-free Voice search</span>, negotiate rates on real-time chat, and scan discount QR vouchers.
+                </p>
+                <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-800/60 font-sans">
+                  <span className="text-[8px] uppercase tracking-wider font-bold text-indigo-400">Contextual Onboarding</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      haptics.success();
+                      localStorage.setItem('konnects_spotlight_services_seen', 'true');
+                      setShowSpotlight(false);
+                    }}
+                    className="px-3.5 py-1.5 bg-indigo-500 hover:bg-indigo-600 border-none text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-colors cursor-pointer"
+                  >
+                    Got it, thanks!
+                  </button>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Redeemed voucher discount alert display */}
       {activeDiscountCode && (
@@ -1078,7 +1243,10 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
                     disableDefaultUI={true}
                   >
                     {mapLayers.workers && visibleProfessionals.map((pro) => {
-                      const coords = LOCATION_COORDINATES[pro.locationName] || { lat: 51.5260 + (Math.random() - 0.5) * 0.02, lng: -0.0780 + (Math.random() - 0.5) * 0.02 };
+                      const hash = (pro.id || pro.name || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+                      const seedLat = (hash % 100) / 100;
+                      const seedLng = ((hash * 7) % 100) / 100;
+                      const coords = LOCATION_COORDINATES[pro.locationName] || { lat: 51.5260 + (seedLat - 0.5) * 0.02, lng: -0.0780 + (seedLng - 0.5) * 0.02 };
                       return (
                         <Marker
                           key={pro.id}
@@ -1207,6 +1375,19 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
                   initial={{ opacity: 0, y: 15 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: index * 0.05 }}
+                  drag="x"
+                  dragConstraints={{ left: 0, right: 0 }}
+                  dragElastic={0.6}
+                  onDragEnd={(event, info) => {
+                    if (info.offset.x > 80) {
+                      haptics.success();
+                      alert(`🔖 Swipe Saved: Verified Expert "${pro.name}" has been bookmarked to your favorites!`);
+                    } else if (info.offset.x < -80) {
+                      haptics.heavy();
+                      setHiddenProIds(prev => [...prev, pro.id]);
+                      alert(`👁️ Swipe Hidden: "${pro.name}" is now hidden from your active recommendations.`);
+                    }
+                  }}
                   className="p-5 bg-white rounded-3xl border border-slate-100 shadow-sm hover:shadow-md transition-all duration-300 flex items-start space-x-4 relative group"
                 >
                 {pro.isDynamic && (
@@ -1240,6 +1421,22 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
                            </span>
                          );
                        })()}
+
+                       {/* Interactive Quick Tip Advice Badge */}
+                       <button
+                         onClick={(e) => {
+                           e.stopPropagation();
+                           haptics.light();
+                           setSelectedQuickTip({
+                             role: pro.role,
+                             name: pro.name,
+                             tip: getImprovementTip(pro.role)
+                           });
+                         }}
+                         className="inline-flex items-center space-x-0.5 text-[7px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 active:scale-95 transition-all cursor-pointer select-none"
+                       >
+                         <span>💡 Quick Tip</span>
+                       </button>
                     </div>
                     <div className="flex items-center space-x-1 text-amber-500">
                       <Star size={11} fill="currentColor" />
@@ -1328,6 +1525,41 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
                       <span>Selected: <span className="font-extrabold text-indigo-950">{selectedService.name}</span> service.</span>
                       <p className="text-[9px] text-indigo-500 mt-1 uppercase tracking-wider">Base Fare Guaranteed: £{selectedService.price}/hr</p>
                     </div>
+                  </div>
+
+                  {/* AI Review Summary Component */}
+                  <div className="bg-slate-50 p-4.5 rounded-2xl border border-slate-150/40 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-2.5 opacity-10">
+                      <Sparkles className="text-indigo-600 animate-pulse" size={42} />
+                    </div>
+                    <div className="flex items-center space-x-2 mb-2">
+                      <Sparkles className="text-indigo-500 shrink-0" size={14} />
+                      <span className="text-[9.5px] font-black uppercase text-indigo-650 tracking-widest">Gemini AI Feedback Digest</span>
+                    </div>
+                    {isReviewSummaryLoading ? (
+                      <div className="flex items-center space-x-2 py-2">
+                        <div className="w-3.5 h-3.5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Generating summary...</span>
+                      </div>
+                    ) : reviewSummary ? (
+                      <div className="space-y-3">
+                        <p className="text-[11px] text-slate-650 leading-relaxed font-semibold italic">
+                          "{reviewSummary.summary}"
+                        </p>
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {reviewSummary.highlights.map((tag, idx) => (
+                            <span 
+                              key={idx} 
+                              className="text-[8px] font-black uppercase tracking-wider px-2 py-1 bg-indigo-50 text-indigo-650 rounded-lg border border-indigo-100"
+                            >
+                              ✨ {tag}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Could not load feedback digest</span>
+                    )}
                   </div>
 
                   {/* AR 3D SPATIAL SCAN OR BIM ESTIMATOR */}
@@ -1813,6 +2045,82 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
           />
         )}
       </AnimatePresence>
+
+      {/* Quick Tip Advice Disclosure Modal */}
+      <AnimatePresence>
+        {selectedQuickTip && (
+          <div className="fixed inset-0 bg-slate-950/65 backdrop-blur-xs z-[400] flex items-center justify-center p-6 text-left">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 15 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 15 }}
+              className="bg-white rounded-[32px] p-6 max-w-sm w-full shadow-2xl space-y-4 border border-slate-100 relative"
+            >
+              <div className="flex justify-between items-start">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-amber-50 rounded-xl text-amber-500">
+                    <Sparkles size={16} className="animate-pulse" />
+                  </div>
+                  <div>
+                    <span className="text-[8px] font-black uppercase text-amber-600 bg-amber-50 px-2 py-0.5 rounded tracking-wider">
+                      Listing Optimization
+                    </span>
+                    <h3 className="text-sm font-black text-slate-900 mt-1 leading-none uppercase tracking-tight">
+                      Listing Advisor
+                    </h3>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedQuickTip(null)}
+                  className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center border border-slate-100 text-slate-400 hover:text-slate-650 cursor-pointer transition-colors"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-1.5">
+                <span className="text-[8.5px] font-black uppercase tracking-wider text-slate-400">
+                  Target Listing: {selectedQuickTip.name} ({selectedQuickTip.role})
+                </span>
+                <p className="text-[11px] text-slate-650 leading-relaxed font-semibold">
+                  "{selectedQuickTip.tip}"
+                </p>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    haptics.success();
+                    setSelectedQuickTip(null);
+                  }}
+                  className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all"
+                >
+                  Apply Optimization
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <FeatureSpotlight
+        featureKey="services_view"
+        title="Services Hub Spotlight"
+        steps={[
+          {
+            title: "Vetted Local Professionals",
+            description: "Hire trades, healthcare, and business professionals with official DBS records and verified badge credentials instantly."
+          },
+          {
+            title: "AI Voice-Powered Booking",
+            description: "Tap the microphone icon to speak a voice command, like 'Book Evelyn Carter doctor', to automate the setup of your appointment."
+          },
+          {
+            title: "Spatial AR Room Scanner",
+            description: "Use the camera spatial AR scanner to model physical areas and automatically calculate material and labor cost quotes."
+          }
+        ]}
+      />
     </div>
   );
 }

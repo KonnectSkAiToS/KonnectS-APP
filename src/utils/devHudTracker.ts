@@ -14,6 +14,7 @@ class DevHudTracker {
   private fps: number = 60;
   private renderTimeMs: number = 2.4;
   private memoryLoadMb: number = 42.1;
+  private renderCount: number = 0;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -46,11 +47,13 @@ class DevHudTracker {
   }
 
   public getStats() {
+    this.renderCount += 1;
     return {
       dbOps: { ...this.dbOps },
       fps: this.fps,
       renderTimeMs: this.renderTimeMs,
       memoryLoadMb: this.memoryLoadMb,
+      renderCount: this.renderCount,
     };
   }
 

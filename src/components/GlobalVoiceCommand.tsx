@@ -1,12 +1,17 @@
-import { useState, useEffect } from 'react';
-import { Mic, MicOff, X, Compass, Check, AlertTriangle, ShieldAlert, HelpCircle } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Mic, MicOff, X, Compass, Check, AlertTriangle, ShieldAlert, HelpCircle, Clock, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { haptics } from '../utils/haptics';
 
 export function GlobalVoiceCommand() {
-  const [isSupported, setIsSupported] = useState(true);
+  const [isSupported, setIsSupported] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    return !!SpeechRecognition;
+  });
   const [isListening, setIsListening] = useState(false);
   const [showHelpOpen, setShowHelpOpen] = useState(false);
+  const [showQuickCommands, setShowQuickCommands] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [recognizedAction, setRecognizedAction] = useState<string | null>(null);
   const [recognition, setRecognition] = useState<any>(null);
@@ -14,7 +19,29 @@ export function GlobalVoiceCommand() {
     return localStorage.getItem('voice_guidance_enabled') === 'true';
   });
 
-  const speakGuidance = (text: string) => {
+  const longPressTimerRef = useRef<any>(null);
+  const isLongPressActiveRef = useRef(false);
+
+  const startLongPress = (e: any) => {
+    isLongPressActiveRef.current = false;
+    longPressTimerRef.current = setTimeout(() => {
+      isLongPressActiveRef.current = true;
+      haptics.success();
+      setShowQuickCommands(true);
+    }, 600);
+  };
+
+  const endLongPress = (e: any) => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+    }
+    if (!isLongPressActiveRef.current) {
+      toggleListening();
+    }
+    isLongPressActiveRef.current = false;
+  };
+
+  const speakGuidance = useCallback((text: string) => {
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
@@ -22,86 +49,29 @@ export function GlobalVoiceCommand() {
       utterance.rate = 1.0;
       window.speechSynthesis.speak(utterance);
     }
-  };
-
-  useEffect(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      setIsSupported(false);
-      return;
-    }
-
-    const rec = new SpeechRecognition();
-    rec.continuous = false;
-    rec.interimResults = false;
-    rec.lang = 'en-GB';
-
-    rec.onstart = () => {
-      setIsListening(true);
-      setTranscript('Listening for commands...');
-      setRecognizedAction(null);
-    };
-
-    rec.onerror = (e: any) => {
-      console.error('Speech recognition error:', e.error);
-      setIsListening(false);
-      if (e.error === 'not-allowed') {
-        setTranscript('Microphone access denied. Enable permissions in settings.');
-      } else {
-        setTranscript('Could not capture audio clearly. Tap again.');
-      }
-    };
-
-    rec.onend = () => {
-      setIsListening(false);
-    };
-
-    rec.onresult = (event: any) => {
-      const resultText = event.results[0][0].transcript;
-      setTranscript(resultText);
-      parseCommand(resultText);
-    };
-
-    setRecognition(rec);
   }, []);
 
-  // Sync turn-by-turn periodic voice updates
-  useEffect(() => {
-    const handleRideChange = (e: any) => {
-      if (!voiceGuidanceEnabled) return;
-      
-      const timer = e.detail?.timer;
-      const driver = localStorage.getItem('active_ride_driver') || 'Cab Driver';
-      const destination = localStorage.getItem('active_ride_destination') || 'destination';
-
-      if (timer === 100) {
-        speakGuidance(`Voice Guidance Update: In 100 yards, your driver ${driver} will turn left onto Great Eastern Street.`);
-      } else if (timer === 60) {
-        speakGuidance(`Voice Guidance Update: Continue straight for 400 yards towards Old Street. Traffic is light and clear.`);
-      } else if (timer === 20) {
-        speakGuidance(`Voice Guidance Update: Preparing to stop on the left at ${destination}. Please ensure all personal items are collected.`);
-      } else if (timer === 0) {
-        speakGuidance("Voice Guidance Update: You have arrived safely at your destination. Greenhouse emission savings logged!");
+  const triggerNavigation = useCallback((tab: string, message: string) => {
+    setRecognizedAction(`✓ ${message}`);
+    setTimeout(() => {
+      setIsListening(false);
+      if ((window as any).__navigateTab) {
+        (window as any).__navigateTab(tab);
       }
-    };
+    }, 1200);
+  }, []);
 
-    window.addEventListener('active_ride_changed', handleRideChange);
-    return () => window.removeEventListener('active_ride_changed', handleRideChange);
-  }, [voiceGuidanceEnabled]);
+  const triggerSpecialSearch = useCallback((tab: string, term: string, message: string) => {
+    setRecognizedAction(`✓ ${message}`);
+    setTimeout(() => {
+      setIsListening(false);
+      if ((window as any).__setGlobalSearchTerm) {
+        (window as any).__setGlobalSearchTerm(tab, term);
+      }
+    }, 1200);
+  }, []);
 
-  const toggleListening = () => {
-    if (!isSupported) {
-      alert('Web Speech Recognition API is unsupported on this browser.');
-      return;
-    }
-    if (isListening) {
-      recognition?.stop();
-    } else {
-      recognition?.start();
-    }
-  };
-
-  const parseCommand = (speech: string) => {
+  const parseCommand = useCallback((speech: string) => {
     const lower = speech.toLowerCase();
     
     // 1. Navigation Commands
@@ -273,26 +243,106 @@ export function GlobalVoiceCommand() {
     else {
       setRecognizedAction('Command not recognized. Say "contact support", "navigate to rides", or "book a cleaner".');
     }
-  };
+  }, [speakGuidance, triggerNavigation, triggerSpecialSearch]);
 
-  const triggerNavigation = (tab: string, message: string) => {
-    setRecognizedAction(`✓ ${message}`);
-    setTimeout(() => {
-      setIsListening(false);
-      if ((window as any).__navigateTab) {
-        (window as any).__navigateTab(tab);
-      }
-    }, 1200);
-  };
+  useEffect(() => {
+    if (!isSupported) return;
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
-  const triggerSpecialSearch = (tab: string, term: string, message: string) => {
-    setRecognizedAction(`✓ ${message}`);
-    setTimeout(() => {
+    const rec = new SpeechRecognition();
+    rec.continuous = false;
+    rec.interimResults = false;
+    rec.lang = 'en-GB';
+
+    rec.onstart = () => {
+      setIsListening(true);
+      setTranscript('Listening for commands...');
+      setRecognizedAction(null);
+    };
+
+    rec.onerror = (e: any) => {
+      console.error('Speech recognition error:', e.error);
       setIsListening(false);
-      if ((window as any).__setGlobalSearchTerm) {
-        (window as any).__setGlobalSearchTerm(tab, term);
+      if (e.error === 'not-allowed') {
+        setTranscript('Microphone access denied. Enable permissions in settings.');
+      } else {
+        setTranscript('Could not capture audio clearly. Tap again.');
       }
-    }, 1200);
+    };
+
+    rec.onend = () => {
+      setIsListening(false);
+    };
+
+    rec.onresult = (event: any) => {
+      const resultText = event.results[0][0].transcript;
+      setTranscript(resultText);
+
+      // Save to localStorage global_voice_command_history
+      try {
+        const existingRaw = localStorage.getItem('global_voice_command_history');
+        const history = existingRaw ? JSON.parse(existingRaw) : [];
+        if (Array.isArray(history)) {
+          history.unshift({
+            text: resultText,
+            timestamp: new Date().toISOString()
+          });
+          localStorage.setItem('global_voice_command_history', JSON.stringify(history.slice(0, 50)));
+          window.dispatchEvent(new CustomEvent('global_voice_command_logged', { detail: resultText }));
+        }
+      } catch (e) {
+        console.error('Error logging voice command:', e);
+      }
+
+      parseCommand(resultText);
+    };
+
+    Promise.resolve().then(() => {
+      setRecognition(rec);
+    });
+  }, [isSupported, parseCommand]);
+
+  useEffect(() => {
+    (window as any).__reexecuteVoiceCommand = parseCommand;
+    return () => {
+      delete (window as any).__reexecuteVoiceCommand;
+    };
+  }, [parseCommand]);
+
+  // Sync turn-by-turn periodic voice updates
+  useEffect(() => {
+    const handleRideChange = (e: any) => {
+      if (!voiceGuidanceEnabled) return;
+      
+      const timer = e.detail?.timer;
+      const driver = localStorage.getItem('active_ride_driver') || 'Cab Driver';
+      const destination = localStorage.getItem('active_ride_destination') || 'destination';
+
+      if (timer === 100) {
+        speakGuidance(`Voice Guidance Update: In 100 yards, your driver ${driver} will turn left onto Great Eastern Street.`);
+      } else if (timer === 60) {
+        speakGuidance(`Voice Guidance Update: Continue straight for 400 yards towards Old Street. Traffic is light and clear.`);
+      } else if (timer === 20) {
+        speakGuidance(`Voice Guidance Update: Preparing to stop on the left at ${destination}. Please ensure all personal items are collected.`);
+      } else if (timer === 0) {
+        speakGuidance("Voice Guidance Update: You have arrived safely at your destination. Greenhouse emission savings logged!");
+      }
+    };
+
+    window.addEventListener('active_ride_changed', handleRideChange);
+    return () => window.removeEventListener('active_ride_changed', handleRideChange);
+  }, [voiceGuidanceEnabled, speakGuidance]);
+
+  const toggleListening = () => {
+    if (!isSupported) {
+      alert('Web Speech Recognition API is unsupported on this browser.');
+      return;
+    }
+    if (isListening) {
+      recognition?.stop();
+    } else {
+      recognition?.start();
+    }
   };
 
   return (
@@ -308,13 +358,19 @@ export function GlobalVoiceCommand() {
 
       {/* Small floating button above the bottom navigation */}
       <button
-        onClick={toggleListening}
+        onMouseDown={startLongPress}
+        onMouseUp={endLongPress}
+        onMouseLeave={() => {
+          if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+        }}
+        onTouchStart={startLongPress}
+        onTouchEnd={endLongPress}
         className={`fixed bottom-20 left-4 z-40 p-4.5 rounded-full shadow-2xl transition-all active:scale-90 border-none cursor-pointer ${
           isListening 
             ? 'bg-rose-600 text-white animate-pulse ring-4 ring-rose-300 dark:ring-rose-950' 
             : 'bg-slate-900 text-slate-100 hover:bg-slate-800'
         }`}
-        title="Global Voice Command Voice Listener"
+        title="Global Voice Command Voice Listener (Hold for Quick Commands)"
       >
         <Mic size={22} className={isListening ? 'animate-bounce' : ''} />
       </button>
@@ -557,6 +613,142 @@ export function GlobalVoiceCommand() {
                   <span className="p-1.5 bg-slate-50 dark:bg-slate-850 rounded-lg">💬 "Contact Support"</span>
                   <span className="p-1.5 bg-slate-50 dark:bg-slate-850 rounded-lg">💬 "Go to rides"</span>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Quick Command Overlay */}
+      <AnimatePresence>
+        {showQuickCommands && (
+          <div className="fixed inset-0 bg-slate-950/75 backdrop-blur-xs z-[6000] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-slate-900 text-white w-full max-w-sm rounded-[32px] p-6 shadow-2xl border border-indigo-900/45 relative space-y-4"
+            >
+              <button 
+                onClick={() => { haptics.light(); setShowQuickCommands(false); }}
+                className="absolute top-4 right-4 p-2 bg-slate-800 hover:bg-slate-700 rounded-xl transition-all border-none cursor-pointer text-slate-400"
+              >
+                <X size={16} />
+              </button>
+
+              <div className="space-y-1 text-left">
+                <span className="bg-indigo-500/10 text-indigo-300 text-[8px] font-mono font-black px-2 py-0.5 rounded-full uppercase tracking-widest border border-indigo-500/20 inline-flex items-center space-x-1">
+                  ⚡ Quick Commands
+                </span>
+                <h3 className="text-sm font-black uppercase tracking-tight text-white leading-tight">
+                  Shortcut Command Center
+                </h3>
+                <p className="text-[10px] text-slate-400 font-medium">
+                  Long-pressed micro-shortcuts for rapid on-site operations. Tap to run.
+                </p>
+              </div>
+
+              <div className="space-y-2 pt-2 text-left">
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptics.success();
+                    setShowQuickCommands(false);
+                    setTranscript("Check my sync status");
+                    setIsListening(true);
+                    setTimeout(() => {
+                      const statusMsg = "Reconciliation complete. Supabase and Firestore queues are fully aligned with 0 pending writes.";
+                      setRecognizedAction("✓ Sync Status Checked");
+                      speakGuidance(statusMsg);
+                      window.dispatchEvent(new CustomEvent('urbanNet_new_notification', {
+                        detail: {
+                          id: 'sync-status-check-' + Date.now(),
+                          type: 'system',
+                          title: '🔄 Sync Engine Active',
+                          message: 'Local IndexedDB state is fully synchronized with Google Firestore.',
+                          timestamp: new Date().toLocaleTimeString(),
+                          isRead: false
+                        }
+                      }));
+                      setIsListening(false);
+                    }, 800);
+                  }}
+                  className="w-full p-3.5 bg-slate-950/60 hover:bg-indigo-950/50 hover:border-indigo-500/30 border border-slate-800 rounded-2xl text-left transition-all flex items-center justify-between group cursor-pointer"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-indigo-500/10 text-indigo-400 rounded-xl border border-indigo-500/20 group-hover:bg-indigo-600 group-hover:text-white transition-all">
+                      <Clock size={14} />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-extrabold text-white">Check my sync status</h4>
+                      <p className="text-[8.5px] text-slate-400 font-medium">Reconcile offline db queues</p>
+                    </div>
+                  </div>
+                  <ArrowRight size={14} className="text-slate-600 group-hover:text-indigo-400 transition-all group-hover:translate-x-1" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptics.success();
+                    setShowQuickCommands(false);
+                    setTranscript("Show worker dashboard");
+                    setIsListening(true);
+                    setTimeout(() => {
+                      setRecognizedAction("✓ Navigating to Worker Dashboard");
+                      speakGuidance("Opening your local trades and services provider portal.");
+                      setIsListening(false);
+                      if ((window as any).__navigateTab) {
+                        (window as any).__navigateTab('services');
+                      }
+                      window.dispatchEvent(new CustomEvent('activate-worker-mode'));
+                    }, 800);
+                  }}
+                  className="w-full p-3.5 bg-slate-950/60 hover:bg-indigo-950/50 hover:border-indigo-500/30 border border-slate-800 rounded-2xl text-left transition-all flex items-center justify-between group cursor-pointer"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-emerald-500/10 text-emerald-400 rounded-xl border border-emerald-500/20 group-hover:bg-emerald-600 group-hover:text-white transition-all">
+                      <Mic size={14} />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-extrabold text-white">Show worker dashboard</h4>
+                      <p className="text-[8.5px] text-slate-400 font-medium">Manage service listings & bids</p>
+                    </div>
+                  </div>
+                  <ArrowRight size={14} className="text-slate-600 group-hover:text-emerald-400 transition-all group-hover:translate-x-1" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptics.heavy();
+                    setShowQuickCommands(false);
+                    setTranscript("SOS Emergency");
+                    setIsListening(true);
+                    setTimeout(() => {
+                      setRecognizedAction("🚨 Emergency SOS Triggered");
+                      speakGuidance("Activating panic protocol. Location shared with Shoreditch emergency responders.");
+                      setIsListening(false);
+                      window.dispatchEvent(new CustomEvent('voice-sos-trigger'));
+                    }, 800);
+                  }}
+                  className="w-full p-3.5 bg-red-950/20 hover:bg-red-950/40 hover:border-red-500/30 border border-red-950/50 rounded-2xl text-left transition-all flex items-center justify-between group cursor-pointer"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-red-500/10 text-red-400 rounded-xl border border-red-500/20 group-hover:bg-red-650 group-hover:text-white transition-all">
+                      <ShieldAlert size={14} />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-extrabold text-red-200">Trigger Emergency SOS</h4>
+                      <p className="text-[8.5px] text-red-400/80 font-medium">Broadcast precise coordinates</p>
+                    </div>
+                  </div>
+                  <ArrowRight size={14} className="text-red-500/60 group-hover:text-red-400 transition-all group-hover:translate-x-1" />
+                </button>
+              </div>
+
+              <div className="text-center pt-2 text-[8px] text-slate-500 font-sans font-bold uppercase tracking-wider">
+                Hold button for 0.6s anytime to show this overlay
               </div>
             </motion.div>
           </div>

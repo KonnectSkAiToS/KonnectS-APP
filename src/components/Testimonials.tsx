@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Star, Shield, Check, MessageSquare, Award, ArrowRight, User } from 'lucide-react';
 import { collection, query, where, getDocs, addDoc, serverTimestamp, orderBy } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
@@ -59,11 +59,7 @@ export function Testimonials({ providerId, providerName, productId, productName,
 
   const displayTargetName = providerName || productName || 'Item';
 
-  useEffect(() => {
-    fetchReviews();
-  }, [providerId, productId]);
-
-  const fetchReviews = async () => {
+  const fetchReviews = useCallback(async () => {
     setLoading(true);
     try {
       let q;
@@ -97,7 +93,17 @@ export function Testimonials({ providerId, providerName, productId, productName,
     } finally {
       setLoading(false);
     }
-  };
+  }, [providerId, productId]);
+
+  useEffect(() => {
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) fetchReviews();
+    });
+    return () => {
+      active = false;
+    };
+  }, [fetchReviews]);
 
   const handleSubmitReview = async (e: React.FormEvent) => {
     e.preventDefault();

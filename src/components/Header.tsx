@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Search, Sparkles, MapPin, ToggleLeft, ToggleRight, Bell } from 'lucide-react';
+import { Search, Sparkles, MapPin, ToggleLeft, ToggleRight, Bell, SlidersHorizontal, Star, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
@@ -59,21 +59,42 @@ export function Header({ onOpenNotifications, unreadCount = 0 }: HeaderProps) {
   const [showSearchFeedback, setShowSearchFeedback] = useState(false);
   const [searchCategoryFeedback, setSearchCategoryFeedback] = useState('');
 
+  // Smart Search Filters State
+  const [showFilters, setShowFilters] = useState(false);
+  const [distanceFilter, setDistanceFilter] = useState(() => localStorage.getItem('global_filter_distance') || 'all');
+  const [ratingFilter, setRatingFilter] = useState(() => localStorage.getItem('global_filter_rating') || 'all');
+  const [verifiedFilter, setVerifiedFilter] = useState(() => localStorage.getItem('global_filter_verified') === 'true');
+
+  const updateDistanceFilter = (val: string) => {
+    setDistanceFilter(val);
+    localStorage.setItem('global_filter_distance', val);
+    window.dispatchEvent(new CustomEvent('urbanNet_filters_updated'));
+  };
+
+  const updateRatingFilter = (val: string) => {
+    setRatingFilter(val);
+    localStorage.setItem('global_filter_rating', val);
+    window.dispatchEvent(new CustomEvent('urbanNet_filters_updated'));
+  };
+
+  const updateVerifiedFilter = (val: boolean) => {
+    setVerifiedFilter(val);
+    localStorage.setItem('global_filter_verified', val ? 'true' : 'false');
+    window.dispatchEvent(new CustomEvent('urbanNet_filters_updated'));
+  };
+
   // Trending & Recent Search State
   const [isDropdownFocused, setIsDropdownFocused] = useState(false);
-  const [recentSearches, setRecentSearches] = useState<string[]>([]);
-  const trendingSearches = ["Plumber", "Taxi ride", "Vintage Sofa", "Eco Cleaner", "Electrician"];
-
-  useEffect(() => {
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => {
     try {
       const stored = localStorage.getItem('konnects_recent_searches');
-      if (stored) {
-        setRecentSearches(JSON.parse(stored));
-      }
+      return stored ? JSON.parse(stored) : [];
     } catch (e) {
       console.error(e);
+      return [];
     }
-  }, []);
+  });
+  const trendingSearches = ["Plumber", "Taxi ride", "Vintage Sofa", "Eco Cleaner", "Electrician"];
 
   const saveRecentSearch = (query: string) => {
     const trimmed = query.trim();
@@ -328,6 +349,106 @@ export function Header({ onOpenNotifications, unreadCount = 0 }: HeaderProps) {
           )}
         </AnimatePresence>
       </form>
+
+      {/* Dynamic Smart Filters Toolbar */}
+      <div className="mt-3 bg-white/70 dark:bg-slate-900/70 backdrop-blur-md rounded-2xl border border-slate-100 dark:border-slate-800 p-3.5 space-y-3 shadow-sm text-left">
+        <button
+          type="button"
+          onClick={() => setShowFilters(!showFilters)}
+          className="flex items-center justify-between w-full font-black text-[9px] uppercase tracking-wider text-slate-500 bg-transparent border-none cursor-pointer"
+        >
+          <div className="flex items-center space-x-1.5">
+            <SlidersHorizontal size={11} className="text-indigo-600 dark:text-indigo-400" />
+            <span className="text-slate-700 dark:text-slate-300">Search Smart Filters</span>
+            {(distanceFilter !== 'all' || ratingFilter !== 'all' || verifiedFilter) && (
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+            )}
+          </div>
+          <span className="text-indigo-650 dark:text-indigo-400 font-extrabold">{showFilters ? 'Hide Panel' : 'Refine Search'}</span>
+        </button>
+
+        <AnimatePresence>
+          {showFilters && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="overflow-hidden space-y-3 pt-2.5 border-t border-slate-50 dark:border-slate-800"
+            >
+              {/* Distance Filter */}
+              <div className="space-y-1.5">
+                <span className="text-[8px] font-black uppercase tracking-widest text-slate-400 block">Maximum Distance</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { label: 'All Distances', value: 'all' },
+                    { label: '< 1 mi', value: '1' },
+                    { label: '< 3 mi', value: '3' },
+                    { label: '< 5 mi', value: '5' }
+                  ].map((d) => (
+                    <button
+                      key={d.value}
+                      type="button"
+                      onClick={() => updateDistanceFilter(d.value)}
+                      className={`px-2.5 py-1.5 rounded-xl text-[9px] font-extrabold transition-all border border-transparent cursor-pointer ${
+                        distanceFilter === d.value
+                          ? 'bg-slate-900 text-white dark:bg-indigo-600 dark:text-white shadow-sm'
+                          : 'bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-750 text-slate-600 dark:text-slate-350'
+                      }`}
+                    >
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Rating Filter */}
+              <div className="space-y-1.5">
+                <span className="text-[8px] font-black uppercase tracking-widest text-slate-400 block">Minimum Rating</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { label: 'All Ratings', value: 'all' },
+                    { label: '4.5+ ★', value: '4.5' },
+                    { label: '4.8+ ★', value: '4.8' }
+                  ].map((r) => (
+                    <button
+                      key={r.value}
+                      type="button"
+                      onClick={() => updateRatingFilter(r.value)}
+                      className={`px-2.5 py-1.5 rounded-xl text-[9px] font-extrabold transition-all border border-transparent cursor-pointer flex items-center space-x-1 ${
+                        ratingFilter === r.value
+                          ? 'bg-slate-900 text-white dark:bg-indigo-600 dark:text-white shadow-sm'
+                          : 'bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-750 text-slate-600 dark:text-slate-350'
+                      }`}
+                    >
+                      {r.value !== 'all' && <Star size={9} className="text-amber-400 fill-amber-400" />}
+                      <span>{r.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Verified Status Toggle */}
+              <div className="flex items-center justify-between pt-1">
+                <div className="flex items-center space-x-1.5">
+                  <ShieldCheck size={14} className="text-indigo-600 dark:text-indigo-400" />
+                  <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Verified Traders Only</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => updateVerifiedFilter(!verifiedFilter)}
+                  className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all border cursor-pointer ${
+                    verifiedFilter
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-950/40 dark:border-emerald-850 dark:text-emerald-400 shadow-sm'
+                      : 'bg-slate-50 dark:bg-slate-800 border-transparent text-slate-600 dark:text-slate-350'
+                  }`}
+                >
+                  {verifiedFilter ? '✓ Enabled' : 'Disabled'}
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }

@@ -21,7 +21,12 @@ interface SpatialARScannerModalProps {
 export function SpatialARScannerModal({ show, onClose, onSaveScan, serviceName }: SpatialARScannerModalProps) {
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
-  const [nodes, setNodes] = useState<{ x: number; y: number; id: number; dist: number }[]>([]);
+  const [nodes, setNodes] = useState<{ x: number; y: number; id: number; dist: number }[]>(() => [
+    { x: 30, y: 30, id: 1, dist: 3.2 },
+    { x: 70, y: 30, id: 2, dist: 4.1 },
+    { x: 70, y: 70, id: 3, dist: 3.0 },
+    { x: 30, y: 70, id: 4, dist: 2.8 },
+  ]);
   const [ceilingHeight, setCeilingHeight] = useState(2.8); // Metres
   const [viewMode, setViewMode] = useState<'camera' | 'bim' | 'floorplan'>('camera');
   const [scanComplete, setScanComplete] = useState(false);
@@ -29,18 +34,30 @@ export function SpatialARScannerModal({ show, onClose, onSaveScan, serviceName }
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const [dimensions, setDimensions] = useState({ width: 400, height: 450 });
 
-  // Initialize pre-calculated dummy boundary lines for high polish
+  // Dynamically update element dimensions via ResizeObserver
   useEffect(() => {
-    if (show && nodes.length === 0) {
-      // Auto-prepopulate some architectural nodes representing a standard L-shape or rectangle room layout
-      setNodes([
-        { x: 30, y: 30, id: 1, dist: 3.2 },
-        { x: 70, y: 30, id: 2, dist: 4.1 },
-        { x: 70, y: 70, id: 3, dist: 3.0 },
-        { x: 30, y: 70, id: 4, dist: 2.8 },
-      ]);
-    }
+    if (!show || !containerRef.current) return;
+    
+    setDimensions({
+      width: containerRef.current.clientWidth || 400,
+      height: containerRef.current.clientHeight || 450
+    });
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.contentRect) {
+          setDimensions({
+            width: entry.contentRect.width || 400,
+            height: entry.contentRect.height || 450
+          });
+        }
+      }
+    });
+
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
   }, [show]);
 
   // Request real camera feed
@@ -57,10 +74,14 @@ export function SpatialARScannerModal({ show, onClose, onSaveScan, serviceName }
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
-      setIsScanning(true);
+      Promise.resolve().then(() => {
+        setIsScanning(true);
+      });
     } catch (err) {
       console.warn('Real camera feed request timed out or was blocked by browser. Activating telemetry simulation.', err);
-      setIsScanning(true);
+      Promise.resolve().then(() => {
+        setIsScanning(true);
+      });
     }
   };
 
@@ -69,16 +90,26 @@ export function SpatialARScannerModal({ show, onClose, onSaveScan, serviceName }
       streamRef.current.getTracks().forEach(t => t.stop());
       streamRef.current = null;
     }
-    setIsScanning(false);
+    Promise.resolve().then(() => {
+      setIsScanning(false);
+    });
   };
 
   useEffect(() => {
+    let active = true;
     if (show) {
-      startCamera();
+      Promise.resolve().then(() => {
+        if (active) startCamera();
+      });
     } else {
-      stopCamera();
+      Promise.resolve().then(() => {
+        if (active) stopCamera();
+      });
     }
-    return () => stopCamera();
+    return () => {
+      active = false;
+      stopCamera();
+    };
   }, [show]);
 
   const addManualNode = (e: React.MouseEvent) => {
@@ -243,7 +274,7 @@ export function SpatialARScannerModal({ show, onClose, onSaveScan, serviceName }
                 <svg className="absolute inset-0 w-full h-full pointer-events-none">
                   {nodes.length > 1 && (
                     <polygon
-                      points={nodes.map(n => `${(n.x / 100) * (containerRef.current?.clientWidth || 400)},${(n.y / 100) * (containerRef.current?.clientHeight || 450)}`).join(' ')}
+                      points={nodes.map(n => `${(n.x / 100) * dimensions.width},${(n.y / 100) * dimensions.height}`).join(' ')}
                       fill="rgba(34, 211, 238, 0.08)"
                       stroke="#22d3ee"
                       strokeWidth="2.5"
@@ -252,8 +283,8 @@ export function SpatialARScannerModal({ show, onClose, onSaveScan, serviceName }
                     />
                   )}
                   {nodes.map((n, idx) => {
-                    const cx = (n.x / 100) * (containerRef.current?.clientWidth || 400);
-                    const cy = (n.y / 100) * (containerRef.current?.clientHeight || 450);
+                    const cx = (n.x / 100) * dimensions.width;
+                    const cy = (n.y / 100) * dimensions.height;
                     return (
                       <g key={n.id}>
                         <circle cx={cx} cy={cy} r="6" fill="#22d3ee" className="animate-pulse" />

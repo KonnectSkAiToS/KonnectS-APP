@@ -143,7 +143,9 @@ export function MapView({ onBack }: { onBack: () => void }) {
     // If key is empty string, we can trigger fallback immediately to provide optimal initial load feel
     if (!GOOGLE_MAPS_API_KEY) {
       (window as any).gmapsHasFailed = true;
-      setMapLoadError(true);
+      Promise.resolve().then(() => {
+        setMapLoadError(true);
+      });
     }
 
     return () => {

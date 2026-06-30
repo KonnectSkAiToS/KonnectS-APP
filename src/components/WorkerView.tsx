@@ -12,12 +12,14 @@ import { ServiceBooking, RideRequest } from '../types';
 import { haptics } from '../utils/haptics';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Check, X, Clock, MapPin, PoundSterling, Bell, MessageSquare, ToggleLeft, ToggleRight, Search, Settings, AlertCircle, User, Shield, Wrench, CreditCard, Users, ShieldCheck, TrendingUp, CheckCircle2, Star, Zap, Package, ArrowRight, Briefcase, ScanFace, FileText, Award, DollarSign, Calendar, Sparkles, Plus, Image } from 'lucide-react';
+import { VerificationStatus } from './VerificationStatus';
+import { WorkHistoryModule } from './WorkHistoryModule';
 
-export function WorkerView({ onChat }: { onChat: (id: string, name: string) => void }) {
+export function WorkerView({ onChat, activeTab }: { onChat: (id: string, name: string) => void; activeTab?: string }) {
   const { profile } = useAuth();
   const [activeBookings, setActiveBookings] = useState<ServiceBooking[]>([]);
   const [activeRides, setActiveRides] = useState<RideRequest[]>([]);
-  const [currentTime, setCurrentTime] = useState(Date.now());
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
   const [searchTerm, setSearchTerm] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [showConfirmOnline, setShowConfirmOnline] = useState(false);
@@ -27,6 +29,50 @@ export function WorkerView({ onChat }: { onChat: (id: string, name: string) => v
   const [counterPrice, setCounterPrice] = useState('');
   const [counterTime, setCounterTime] = useState('');
   const [earningsHistory, setEarningsHistory] = useState<any[]>([]);
+
+  // Vehicle Proof and ID Verification for Rides (State & Handlers)
+  const [hasVehicleProof, setHasVehicleProof] = useState(() => {
+    return localStorage.getItem('konnects_vehicle_proof_submitted') === 'true';
+  });
+  const [ridesProofForm, setRidesProofForm] = useState({
+    licenseNumber: '',
+    vehicleRegistration: '',
+    insuranceProvider: '',
+    insurancePolicyNumber: '',
+  });
+  const [submittingRidesProof, setSubmittingRidesProof] = useState(false);
+
+  // Job Services Setup and Skills / Work History (State & Handlers)
+  const [jobsCanDo, setJobsCanDo] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem('konnects_jobs_can_do');
+      return stored ? JSON.parse(stored) : ['Cleaner', 'Handyman'];
+    } catch {
+      return ['Cleaner', 'Handyman'];
+    }
+  });
+  const [workHistory, setWorkHistory] = useState<Array<{ title: string; employer: string; duration: string; details: string }>>(() => {
+    try {
+      const stored = localStorage.getItem('konnects_work_history');
+      return stored ? JSON.parse(stored) : [
+        { title: 'Senior Cleaner', employer: 'EcoClean Ltd', duration: '2 Years', details: 'Managed deep cleaning operations for commercial premises.' }
+      ];
+    } catch {
+      return [
+        { title: 'Senior Cleaner', employer: 'EcoClean Ltd', duration: '2 Years', details: 'Managed deep cleaning operations for commercial premises.' }
+      ];
+    }
+  });
+  const [experienceYears, setExperienceYears] = useState(() => {
+    return localStorage.getItem('konnects_experience_years') || '3';
+  });
+  const [newJobTypeInput, setNewJobTypeInput] = useState('');
+  const [newHistory, setNewHistory] = useState({
+    title: '',
+    employer: '',
+    duration: '',
+    details: '',
+  });
 
   // First-time onboarding state
   const [onboardStep, setOnboardStep] = useState(1);
@@ -799,7 +845,7 @@ export function WorkerView({ onChat }: { onChat: (id: string, name: string) => v
                     </p>
                   </div>
 
-                  <div className="space-y-4 pt-2">
+                  <div className="space-y-4 pt-2 text-left">
                     <div className="space-y-1.5">
                       <label className="text-[9px] font-black uppercase text-slate-400 tracking-wider">Hourly Rate (£ / Hour)</label>
                       <div className="relative">
@@ -815,18 +861,24 @@ export function WorkerView({ onChat }: { onChat: (id: string, name: string) => v
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-[9px] font-black uppercase text-slate-400 tracking-wider font-sans">Professional Bio / Experience</label>
+                      <label className="text-[9px] font-black uppercase text-slate-400 tracking-wider font-sans">Professional Bio / Experience Summary</label>
                       <textarea
-                        rows={4}
+                        rows={3}
                         value={jobInfo}
                         onChange={(e) => setJobInfo(e.target.value)}
-                        placeholder="e.g. SIA licensed with 5 years protection experience. Completed DBS check."
+                        placeholder="e.g. Qualified specialist with deep experience. Complete and highly professional service delivery."
                         className="w-full p-4 bg-slate-905 border border-slate-800 rounded-xl font-medium text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 leading-relaxed resize-none"
                       />
                     </div>
+
+                    {/* Integrated Dynamic Work History, Certifications, and Specialized Skills checklist */}
+                    <div className="mt-4 p-5 bg-slate-950 rounded-3xl border border-slate-850 space-y-4">
+                      <h3 className="text-[10px] font-black uppercase tracking-widest text-indigo-400">Professional Experience, Skills & Credentials</h3>
+                      <WorkHistoryModule />
+                    </div>
                   </div>
 
-                  <div className="flex gap-3 pt-2">
+                  <div className="flex gap-3 pt-4">
                     <button
                       type="button"
                       onClick={() => setOnboardStep(1)}
@@ -1094,6 +1146,256 @@ export function WorkerView({ onChat }: { onChat: (id: string, name: string) => v
         <footer className="text-center text-[10px] text-slate-600 uppercase tracking-widest font-mono">
           SECURE CREDENTIAL ENVELOPE E1
         </footer>
+      </div>
+    );
+  }
+
+  if (activeTab === 'rides') {
+    return (
+      <div className="pb-24 pt-6 px-4 max-w-md mx-auto min-h-screen bg-slate-50/30">
+        <header className="mb-6">
+          <h1 className="text-3xl font-black text-slate-900 tracking-tight">Rides Driver Hub</h1>
+          <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">
+            Vehicle & Identity Verification Console
+          </p>
+        </header>
+
+        {!hasVehicleProof ? (
+          <div className="space-y-6">
+            <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-3xl p-6 text-amber-900 dark:text-amber-300 shadow-sm">
+              <div className="flex items-start space-x-3">
+                <Shield size={24} className="text-amber-600 mt-1 flex-shrink-0" />
+                <div>
+                  <h3 className="font-black text-xs uppercase tracking-wider">Proof of Vehicle & ID Required</h3>
+                  <p className="text-[11px] text-amber-850 dark:text-amber-400 font-medium mt-1 leading-relaxed">
+                    Under UK transport regulations and KonnectS safe-travel protocols, you must submit proof of identity and vehicle compliance before accessing ride-matching.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <VerificationStatus onBack={() => {
+              const checkProof = localStorage.getItem('konnects_vehicle_proof_submitted') === 'true';
+              if (checkProof) {
+                setHasVehicleProof(true);
+              }
+            }} />
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <div className="bg-emerald-50 border border-emerald-200 rounded-3xl p-6 text-emerald-950 shadow-sm flex items-start space-x-3">
+              <ShieldCheck size={24} className="text-emerald-600 mt-1 flex-shrink-0" />
+              <div>
+                <h3 className="font-black text-xs uppercase tracking-wider">Driver Status: Accredited & Verified</h3>
+                <p className="text-[11px] text-emerald-800 font-medium mt-1 leading-relaxed">
+                  Your UK driving licence ({localStorage.getItem('konnects_driver_licence') || 'Verified'}) and vehicle registration ({localStorage.getItem('konnects_driver_rc') || 'Verified'}) have been confirmed. You are active to offer rides.
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4">
+              <h2 className="text-xs font-black uppercase tracking-widest text-slate-400">Driver Compliance Details</h2>
+              <div className="grid grid-cols-2 gap-4 text-xs">
+                <div>
+                  <span className="text-[9px] uppercase font-bold text-slate-400 block">Licence</span>
+                  <span className="font-mono font-black">{localStorage.getItem('konnects_driver_licence') || 'SMITH905204SM99'}</span>
+                </div>
+                <div>
+                  <span className="text-[9px] uppercase font-bold text-slate-400 block">Plate Mark</span>
+                  <span className="font-mono font-black">{localStorage.getItem('konnects_driver_rc') || 'LV19 GDX'}</span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  localStorage.removeItem('konnects_vehicle_proof_submitted');
+                  setHasVehicleProof(false);
+                  haptics.light();
+                }}
+                className="w-full py-3 border border-red-200 text-red-600 rounded-xl hover:bg-red-50 text-[10px] font-black uppercase tracking-wider transition-colors mt-2"
+              >
+                Revoke Verification & Clear State
+              </button>
+            </div>
+
+            <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4">
+              <h2 className="text-xs font-black uppercase tracking-widest text-slate-400">Active Carpooling Requests</h2>
+              <div className="p-4 bg-slate-50 rounded-2xl text-center text-[11px] font-bold text-slate-500">
+                Searching for near commuting matches matching your routes...
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (activeTab === 'services') {
+    return (
+      <div className="pb-24 pt-6 px-4 max-w-md mx-auto min-h-screen bg-slate-50/30">
+        <header className="mb-6">
+          <h1 className="text-3xl font-black text-slate-900 tracking-tight">Services Portfolio</h1>
+          <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">
+            Jobs, Experience, & Employment History
+          </p>
+        </header>
+
+        <div className="space-y-6">
+          {/* Experience Counter */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-3">
+            <h2 className="text-xs font-black uppercase tracking-widest text-slate-400">Years of Experience</h2>
+            <div className="flex items-center space-x-4">
+              <input
+                type="range"
+                min="0"
+                max="25"
+                value={experienceYears}
+                onChange={e => {
+                  setExperienceYears(e.target.value);
+                  localStorage.setItem('konnects_experience_years', e.target.value);
+                }}
+                className="flex-1 accent-indigo-600"
+              />
+              <span className="bg-slate-100 px-3 py-1.5 rounded-xl text-xs font-black text-indigo-950 font-mono">
+                {experienceYears} Years
+              </span>
+            </div>
+          </div>
+
+          {/* List of Jobs */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4">
+            <h2 className="text-xs font-black uppercase tracking-widest text-slate-400">Services Provided</h2>
+            <div className="flex flex-wrap gap-2">
+              {jobsCanDo.map((job, idx) => (
+                <span key={idx} className="bg-indigo-50 border border-indigo-100 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider text-indigo-700 flex items-center space-x-1">
+                  <span>{job}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const updated = jobsCanDo.filter((_, i) => i !== idx);
+                      setJobsCanDo(updated);
+                      localStorage.setItem('konnects_jobs_can_do', JSON.stringify(updated));
+                      haptics.light();
+                    }}
+                    className="text-indigo-400 hover:text-indigo-800 transition-colors ml-1 font-black"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              {jobsCanDo.length === 0 && (
+                <p className="text-xs text-slate-400 italic font-medium">No job types listed yet.</p>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Add e.g. Cleaner, Plumber..."
+                value={newJobTypeInput}
+                onChange={e => setNewJobTypeInput(e.target.value)}
+                className="flex-1 px-4 py-2.5 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand text-xs font-bold"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  if (!newJobTypeInput.trim()) return;
+                  const updated = [...jobsCanDo, newJobTypeInput.trim()];
+                  setJobsCanDo(updated);
+                  localStorage.setItem('konnects_jobs_can_do', JSON.stringify(updated));
+                  setNewJobTypeInput('');
+                  haptics.success();
+                }}
+                className="bg-slate-900 text-white font-black text-[10px] uppercase tracking-wider px-4 rounded-xl active:scale-95 transition-all"
+              >
+                Add Job
+              </button>
+            </div>
+          </div>
+
+          {/* Work History */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4">
+            <h2 className="text-xs font-black uppercase tracking-widest text-slate-400">Work & Employment History</h2>
+            
+            <div className="space-y-3">
+              {workHistory.map((item, idx) => (
+                <div key={idx} className="p-4 bg-slate-50 border border-slate-100 rounded-2xl relative">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const updated = workHistory.filter((_, i) => i !== idx);
+                      setWorkHistory(updated);
+                      localStorage.setItem('konnects_work_history', JSON.stringify(updated));
+                      haptics.light();
+                    }}
+                    className="absolute top-3 right-3 text-red-500 hover:text-red-700 text-xs font-black uppercase"
+                  >
+                    Remove
+                  </button>
+                  <p className="font-black text-xs text-indigo-950 uppercase tracking-wide">{item.title}</p>
+                  <p className="text-[10px] text-slate-500 font-bold">{item.employer} • {item.duration}</p>
+                  <p className="text-xs text-slate-600 mt-2 font-medium">{item.details}</p>
+                </div>
+              ))}
+              {workHistory.length === 0 && (
+                <p className="text-xs text-slate-400 italic text-center py-4 font-medium">No previous employment records listed.</p>
+              )}
+            </div>
+
+            {/* Add Work History Form */}
+            <div className="border-t border-slate-100 pt-4 space-y-3">
+              <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-400">Add History Record</h3>
+              <input
+                type="text"
+                placeholder="Job Title (e.g. Master Plumber)"
+                value={newHistory.title}
+                onChange={e => setNewHistory({ ...newHistory, title: e.target.value })}
+                className="w-full px-4 py-2.5 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand text-xs font-bold"
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <input
+                  type="text"
+                  placeholder="Employer (e.g. self-employed)"
+                  value={newHistory.employer}
+                  onChange={e => setNewHistory({ ...newHistory, employer: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand text-xs font-bold"
+                />
+                <input
+                  type="text"
+                  placeholder="Duration (e.g. 1 Year)"
+                  value={newHistory.duration}
+                  onChange={e => setNewHistory({ ...newHistory, duration: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand text-xs font-bold"
+                />
+              </div>
+              <textarea
+                placeholder="Job details & reference notes..."
+                value={newHistory.details}
+                onChange={e => setNewHistory({ ...newHistory, details: e.target.value })}
+                className="w-full px-4 py-2.5 bg-slate-50 rounded-xl outline-none focus:ring-2 focus:ring-brand text-xs font-bold h-20 resize-none"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  if (!newHistory.title || !newHistory.employer) {
+                    alert("Please provide at least a Job Title and Employer name.");
+                    return;
+                  }
+                  const updated = [...workHistory, newHistory];
+                  setWorkHistory(updated);
+                  localStorage.setItem('konnects_work_history', JSON.stringify(updated));
+                  setNewHistory({ title: '', employer: '', duration: '', details: '' });
+                  haptics.success();
+                  playTTS("Employment record added successfully.");
+                }}
+                className="w-full py-3 bg-slate-900 text-white font-black text-[10px] uppercase tracking-wider rounded-xl hover:opacity-90 active:scale-95 transition-all"
+              >
+                Save History Record
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }

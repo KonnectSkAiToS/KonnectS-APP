@@ -6,7 +6,7 @@
 import { Home, ShoppingBag, Briefcase, Car, User, ShieldAlert, Cloud } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useLanguage } from '../contexts/LanguageContext';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { haptics } from '../utils/haptics';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../lib/firebase';
@@ -28,7 +28,7 @@ export function Navigation({ activeTab, setActiveTab }: NavigationProps) {
   const [hybridSyncActive, setHybridSyncActive] = useState(false);
   const [isPressingSOS, setIsPressingSOS] = useState(false);
   const [sosTriggered, setSosTriggered] = useState(false);
-  let sosTimer: any = null;
+  const sosTimerRef = useRef<any>(null);
 
   useEffect(() => {
     const handleOnline = () => {
@@ -43,7 +43,9 @@ export function Navigation({ activeTab, setActiveTab }: NavigationProps) {
     window.addEventListener('offline', handleOffline);
     
     if (!navigator.onLine) {
-      setSyncStatus('offline');
+      Promise.resolve().then(() => {
+        setSyncStatus('offline');
+      });
     }
 
     const handleCustomSync = () => {
@@ -71,7 +73,7 @@ export function Navigation({ activeTab, setActiveTab }: NavigationProps) {
     e.preventDefault();
     haptics.heavy();
     setIsPressingSOS(true);
-    sosTimer = setTimeout(async () => {
+    sosTimerRef.current = setTimeout(async () => {
       haptics.heavy();
       setSosTriggered(true);
       setIsPressingSOS(false);
@@ -98,7 +100,7 @@ export function Navigation({ activeTab, setActiveTab }: NavigationProps) {
 
   const cancelSosTimer = () => {
     setIsPressingSOS(false);
-    if (sosTimer) clearTimeout(sosTimer);
+    if (sosTimerRef.current) clearTimeout(sosTimerRef.current);
   };
 
   const sendSosToFirestore = async (lat: number, lng: number) => {
@@ -173,24 +175,52 @@ export function Navigation({ activeTab, setActiveTab }: NavigationProps) {
 
         {/* Background Cache Sync Status Indicator */}
         <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 select-none pointer-events-none z-50">
-          <div className={`px-2 py-0.5 rounded-full border text-[7.5px] font-black uppercase tracking-widest flex items-center space-x-1.5 shadow-sm transition-all duration-300 ${
-            syncStatus === 'on' 
-              ? 'bg-white text-emerald-600 border-emerald-100 shadow-emerald-150/30 dark:bg-slate-950 dark:border-emerald-950/40 dark:text-emerald-400' 
-              : syncStatus === 'syncing'
-              ? 'bg-white text-indigo-600 border-indigo-100 shadow-indigo-150/30 animate-pulse dark:bg-slate-950 dark:border-indigo-950/40 dark:text-indigo-400'
-              : 'bg-white text-amber-600 border-amber-100 shadow-amber-150/30 dark:bg-slate-950 dark:border-amber-950/40 dark:text-amber-400'
-          }`}>
-            <div className={`w-1.5 h-1.5 rounded-full ${
+          <motion.div 
+            animate={syncStatus === 'syncing' ? {
+              scale: [1, 1.04, 1],
+              boxShadow: ["0px 1px 3px rgba(99,102,241,0.2)", "0px 2px 8px rgba(99,102,241,0.4)", "0px 1px 3px rgba(99,102,241,0.2)"]
+            } : {
+              scale: 1,
+              boxShadow: "0px 1px 3px rgba(16,185,129,0.15)"
+            }}
+            transition={syncStatus === 'syncing' ? {
+              duration: 2,
+              repeat: Infinity,
+              ease: "easeInOut"
+            } : undefined}
+            className={`px-2.5 py-0.5 rounded-full border text-[7.5px] font-black uppercase tracking-widest flex items-center space-x-1.5 transition-all duration-300 ${
               syncStatus === 'on' 
-                ? 'bg-emerald-500 shadow-[0_0_6px_#10b981]' 
+                ? 'bg-white text-emerald-600 border-emerald-100 dark:bg-slate-950 dark:border-emerald-950/40 dark:text-emerald-400' 
                 : syncStatus === 'syncing'
-                ? 'bg-indigo-500 shadow-[0_0_6px_#6366f1] animate-ping'
-                : 'bg-amber-500 shadow-[0_0_6px_#f59e0b]'
-            }`} />
+                ? 'bg-white text-indigo-600 border-indigo-100 dark:bg-slate-950 dark:border-indigo-950/40 dark:text-indigo-400'
+                : 'bg-white text-amber-600 border-amber-100 dark:bg-slate-950 dark:border-amber-950/40 dark:text-amber-400'
+            }`}
+          >
+            <motion.div 
+              animate={syncStatus === 'syncing' ? {
+                scale: [1, 1.3, 1],
+                opacity: [0.7, 1, 0.7]
+              } : {
+                scale: 1,
+                opacity: 1
+              }}
+              transition={syncStatus === 'syncing' ? {
+                duration: 2,
+                repeat: Infinity,
+                ease: "easeInOut"
+              } : undefined}
+              className={`w-1.5 h-1.5 rounded-full ${
+                syncStatus === 'on' 
+                  ? 'bg-emerald-500 shadow-[0_0_6px_#10b981]' 
+                  : syncStatus === 'syncing'
+                  ? 'bg-indigo-500 shadow-[0_0_6px_#6366f1]'
+                  : 'bg-amber-500 shadow-[0_0_6px_#f59e0b]'
+              }`} 
+            />
             <span>
-              {syncStatus === 'on' ? 'SW Cache Saved' : syncStatus === 'syncing' ? 'Syncing...' : 'Local Enclave'}
+              {syncStatus === 'on' ? 'Up-to-date' : syncStatus === 'syncing' ? 'Syncing...' : 'Offline'}
             </span>
-          </div>
+          </motion.div>
         </div>
 
         {tabs.map((tab) => {

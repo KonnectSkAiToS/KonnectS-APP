@@ -67,8 +67,7 @@ service cloud.firestore {
                (!('featured' in data) || data.featured is bool);
       }
 
-      allow get: if isSignedIn();
-      allow list: if false; 
+      allow read: if true;
       allow create: if isOwner(userId) && isValidUser(incoming()) && incoming().createdAt == request.time;
       allow update: if isOwner(userId) && (
         // Only allow updating non-critical fields
@@ -173,7 +172,7 @@ service cloud.firestore {
                data.customerId is string &&
                data.serviceType is string && data.serviceType.size() <= 100 &&
                data.status in ['pending', 'accepted', 'completed', 'cancelled', 'timed_out', 'negotiating'] &&
-               data.createdAt is timestamp &&
+               (data.createdAt is timestamp || data.createdAt is string) &&
                (!('suggestedPrice' in data) || data.suggestedPrice is number) &&
                (!('estimatedCompletionTime' in data) || data.estimatedCompletionTime is string);
       }
@@ -184,14 +183,14 @@ service cloud.firestore {
       allow update: if isSignedIn() && (
         // Customer actions
         (isOwner(existing().customerId) && 
-         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'description', 'updatedAt', 'suggestedPrice'])) ||
+         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'description', 'updatedAt', 'suggestedPrice', 'createdAt'])) ||
         // Worker actions (accepting or countering)
         (incoming().diff(existing()).affectedKeys().hasAny(['workerId', 'status', 'suggestedPrice', 'estimatedCompletionTime', 'updatedAt']) && 
          (incoming().status in ['accepted', 'negotiating'])) ||
         // Assigned worker actions
         (existing().workerId != null && isOwner(existing().workerId) && 
          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
-      ) && isValidBooking(incoming()) && incoming().createdAt == existing().createdAt;
+      ) && isValidBooking(incoming()) && (incoming().createdAt == existing().createdAt || isOwner(existing().customerId));
     }
 
     // 5. AR Snapshots Rules

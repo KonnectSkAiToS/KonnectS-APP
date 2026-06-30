@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { ShoppingBag, ChevronLeft, ChevronRight, Heart, Share2, MapPin, Tag, Star, Clock, ShieldCheck, Image as ImageIcon, Camera, RotateCw, Move, Check, Sparkles, Sliders, Play, Pause, CameraOff, AlertCircle, Maximize2, Minimize2, Trash, X, Bookmark, Bell } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LineChart, Line, ResponsiveContainer, Tooltip } from 'recharts';
@@ -11,6 +11,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { LazyImage } from './LazyImage';
 import { collection, query, where, onSnapshot, setDoc, doc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { haptics } from '../utils/haptics';
 
 function generateFluctuations(basePrice: number, seed: string) {
   let hash = 0;
@@ -56,6 +57,7 @@ export function MarketplaceItemCard({
 
   const { user, profile } = useAuth();
   const [isHovered, setIsHovered] = useState(false);
+  const [isHidden, setIsHidden] = useState(false);
 
   // Synchronize recently viewed items in local storage on hover
   useEffect(() => {
@@ -106,12 +108,18 @@ export function MarketplaceItemCard({
 
   // Load subscriptions from local device cache on init
   useEffect(() => {
+    let active = true;
     try {
       const subs = JSON.parse(localStorage.getItem('price_drop_subscriptions') || '[]');
-      setIsSubscribed(subs.includes(item.id));
+      Promise.resolve().then(() => {
+        if (active) setIsSubscribed(subs.includes(item.id));
+      });
     } catch (e) {
       console.error(e);
     }
+    return () => {
+      active = false;
+    };
   }, [item.id]);
 
   const toggleSubscription = () => {
@@ -288,46 +296,25 @@ export function MarketplaceItemCard({
     }
   };
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        document.activeElement?.tagName === 'INPUT' ||
-        document.activeElement?.tagName === 'TEXTAREA'
-      ) {
-        return;
+  const startCamera = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: 'environment' } 
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        setCameraActive(true);
       }
-      if (e.key.toLowerCase() === 'a') {
-        if (isHovered || shortcutEnabled) {
-          e.preventDefault();
-          openARViewer();
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [shortcutEnabled, isHovered]);
-
-  const nextImg = (e: any) => {
-    e.stopPropagation();
-    setCurrentImg((prev) => (prev + 1) % images.length);
-  };
-  
-  const prevImg = (e: any) => {
-    e.stopPropagation();
-    setCurrentImg((prev) => (prev - 1 + images.length) % images.length);
-  };
-
-  // Pre-calculate deterministic price fluctuations for this item based on price and ID
-  const fluctuations = generateFluctuations(item.price || 25, item.id);
-  const startPrice = fluctuations[0].price;
-  const endPrice = item.price || 25;
-  const pctDiff = startPrice > 0 ? ((endPrice - startPrice) / startPrice) * 100 : 0;
+    } catch (err) {
+      console.warn("Camera could not be accessed. Activating AR simulation workspace.", err);
+      setCameraActive(false);
+      setCameraPermissionError(true);
+    }
+  }, []);
 
   // AR Camera stream management
-  const openARViewer = () => {
+  const openARViewer = useCallback(() => {
     setArOpen(true);
     setPlaced(false);
     
@@ -356,24 +343,45 @@ export function MarketplaceItemCard({
     setTimeout(() => {
       startCamera();
     }, 200);
+  }, [item.id, startCamera]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        document.activeElement?.tagName === 'INPUT' ||
+        document.activeElement?.tagName === 'TEXTAREA'
+      ) {
+        return;
+      }
+      if (e.key.toLowerCase() === 'a') {
+        if (isHovered || shortcutEnabled) {
+          e.preventDefault();
+          openARViewer();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [shortcutEnabled, isHovered, openARViewer]);
+
+  const nextImg = (e: any) => {
+    e.stopPropagation();
+    setCurrentImg((prev) => (prev + 1) % images.length);
+  };
+  
+  const prevImg = (e: any) => {
+    e.stopPropagation();
+    setCurrentImg((prev) => (prev - 1 + images.length) % images.length);
   };
 
-  const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'environment' } 
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        setCameraActive(true);
-      }
-    } catch (err) {
-      console.warn("Camera could not be accessed. Activating AR simulation workspace.", err);
-      setCameraActive(false);
-      setCameraPermissionError(true);
-    }
-  };
+  // Pre-calculate deterministic price fluctuations for this item based on price and ID
+  const fluctuations = generateFluctuations(item.price || 25, item.id);
+  const startPrice = fluctuations[0].price;
+  const endPrice = item.price || 25;
+  const pctDiff = startPrice > 0 ? ((endPrice - startPrice) / startPrice) * 100 : 0;
 
   const closeARViewer = () => {
     if (streamRef.current) {
@@ -483,12 +491,30 @@ export function MarketplaceItemCard({
     }
   };
 
+  if (isHidden) return null;
+
   return (
     <motion.div
       layout
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       whileHover={{ y: -6, scale: 1.015, boxShadow: "0 25px 30px -5px rgba(0, 0, 0, 0.06)" }}
+      drag="x"
+      dragConstraints={{ left: 0, right: 0 }}
+      dragElastic={0.6}
+      onDragEnd={(event, info) => {
+        if (info.offset.x > 80) {
+          haptics.success();
+          if (!isSaved) {
+            onSave();
+          }
+          alert(`🔖 Swipe Saved: "${item.title}" added to your saved listings!`);
+        } else if (info.offset.x < -80) {
+          haptics.heavy();
+          setIsHidden(true);
+          alert(`👁️ Swipe Hidden: "${item.title}" has been hidden from your active view.`);
+        }
+      }}
       transition={{ 
         layout: { type: "spring", stiffness: 350, damping: 25 },
         default: { ease: "easeOut", duration: 0.3 }

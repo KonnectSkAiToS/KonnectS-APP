@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
-import { Search, MapPin, Bell, Car, ShoppingBag, Briefcase, Package, LifeBuoy, MoreHorizontal, ArrowRight, ToggleLeft, ToggleRight, Clock, Check, MessageSquare, X, Trash, Sparkles, Tag, TrendingUp, Target, PoundSterling, Plus, AlertTriangle, PhoneCall, Star, Info, Trophy, Award, Heart } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Search, MapPin, Bell, Car, ShoppingBag, Briefcase, Package, LifeBuoy, MoreHorizontal, ArrowRight, ToggleLeft, ToggleRight, Clock, Check, MessageSquare, X, Trash, Sparkles, Tag, TrendingUp, Target, PoundSterling, Plus, AlertTriangle, PhoneCall, Star, Info, Trophy, Award, Heart, AlertCircle, Database } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, Tooltip, XAxis, YAxis, ReferenceLine, PieChart, Pie, Cell, BarChart, Bar, Legend } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
@@ -36,6 +36,34 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
   const { profile } = useAuth();
   const [proTips, setProTips] = useState<any[]>([]);
   const [loadingTips, setLoadingTips] = useState(true);
+  const [safetyAlerts, setSafetyAlerts] = useState([
+    { id: 'alert-1', type: 'road', title: 'Road Closure: Old Street A501 Eastbound', message: 'Emergency water works near Shoreditch Town Hall. Local dispatches might face 10-15m delays.', severity: 'medium', active: true },
+    { id: 'alert-2', type: 'weather', title: 'Amber Rain Warning: Shoreditch Basin', message: 'Risk of localized surface water pooling near low-lying paths in Hoxton.', severity: 'high', active: true }
+  ]);
+
+  useEffect(() => {
+    // Push safety alerts to the global notification center on mount
+    const alert1Key = 'konnects_safety_alert_1_logged';
+    const alert2Key = 'konnects_safety_alert_2_logged';
+    
+    if (localStorage.getItem(alert1Key) !== 'true') {
+      addNotification(
+        'info',
+        '⚠ Safety Warning: Old Street',
+        'Road closure eastbound near Shoreditch Town Hall. Expect 15-minute transport delays.'
+      );
+      localStorage.setItem(alert1Key, 'true');
+    }
+    
+    if (localStorage.getItem(alert2Key) !== 'true') {
+      addNotification(
+        'info',
+        '⛈ Weather Warning: Hoxton',
+        'Amber Rainfall Warning: Localized pedestrian walkway pooling reported.'
+      );
+      localStorage.setItem(alert2Key, 'true');
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -329,7 +357,7 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
     return parseFloat((R * c).toFixed(2)); // distance in km
   };
 
-  const fetchCommuteInsights = async (originName: string) => {
+  const fetchCommuteInsights = useCallback(async (originName: string) => {
     setLoadingCommuteInsights(true);
     try {
       const resp = await fetch('/api/gemini/commute-insights', {
@@ -346,13 +374,19 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
     } finally {
       setLoadingCommuteInsights(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
+    let active = true;
     if (userLocationName) {
-      fetchCommuteInsights(userLocationName);
+      Promise.resolve().then(() => {
+        if (active) fetchCommuteInsights(userLocationName);
+      });
     }
-  }, [userLocationName]);
+    return () => {
+      active = false;
+    };
+  }, [userLocationName, fetchCommuteInsights]);
 
   useEffect(() => {
     if (!profile?.uid) return;
@@ -656,8 +690,24 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
   const [searchQuery, setSearchQuery] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [lastBookedService, setLastBookedService] = useState<any>(null);
-  const [activeRide, setActiveRide] = useState<any>(null);
-  const [recentlyViewedItems, setRecentlyViewedItems] = useState<any[]>([]);
+  const [activeRide, setActiveRide] = useState<any>(() => {
+    try {
+      const savedRide = localStorage.getItem('urbanNet_activeRide');
+      return savedRide ? JSON.parse(savedRide) : null;
+    } catch (e) {
+      console.error(e);
+      return null;
+    }
+  });
+  const [recentlyViewedItems, setRecentlyViewedItems] = useState<any[]>(() => {
+    try {
+      const savedViewed = localStorage.getItem('urbanNet_recentlyViewed');
+      return savedViewed ? JSON.parse(savedViewed) : [];
+    } catch (e) {
+      console.error(e);
+      return [];
+    }
+  });
 
   const handleSearchSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -780,29 +830,7 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
       }
     });
 
-    // Load active ride from local storage
-    try {
-      const savedRide = localStorage.getItem('urbanNet_activeRide');
-      if (savedRide) {
-        setActiveRide(JSON.parse(savedRide));
-      } else {
-        setActiveRide(null);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-
-    // Load recently viewed marketplace items from local storage
-    try {
-      const savedViewed = localStorage.getItem('urbanNet_recentlyViewed');
-      if (savedViewed) {
-        setRecentlyViewedItems(JSON.parse(savedViewed));
-      } else {
-        setRecentlyViewedItems([]);
-      }
-    } catch (e) {
-      console.error(e);
-    }
+    // State loaded via lazy initializers to prevent cascading render warnings
 
     return () => {
       unsubscribeLast();
@@ -982,23 +1010,69 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
         </motion.div>
       ) : (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-          {/* Hero Banner */}
+          {/* Personalized, Time-of-day-aware AI Greeting & Contextual Recommendations */}
           <motion.div
             whileHover={{ scale: 0.98 }}
-            className="relative bg-slate-900 rounded-3xl p-6 mb-8 overflow-hidden text-white group cursor-pointer"
+            className="relative bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-950 rounded-[32px] p-6 mb-8 overflow-hidden text-white group shadow-xl border border-indigo-500/20"
           >
-            <div className="absolute -right-4 -top-4 w-32 h-32 bg-brand/30 rounded-full blur-3xl group-hover:bg-brand/50 transition-colors"></div>
-            <div className="relative z-10">
-              <h2 className="text-2xl font-bold mb-2">Welcome back, {profile?.username || 'User'}!</h2>
-              <p className="text-slate-400 text-sm mb-4">You have {profile?.rewardsPoints?.toLocaleString() || 0} reward points available.</p>
-              <button 
-                id="referral-invite-btn"
-                onClick={() => onNavigateReferral?.()}
-                className="bg-white text-slate-900 px-4 py-2 rounded-xl text-sm font-bold flex items-center space-x-2 active:scale-95 transition-all"
-              >
-                <span>Invite & Earn 500pts</span>
-                <ArrowRight size={14} />
-              </button>
+            <div className="absolute -right-4 -top-4 w-36 h-36 bg-indigo-500/20 rounded-full blur-3xl group-hover:bg-indigo-500/30 transition-colors"></div>
+            <div className="relative z-10 space-y-4 text-left">
+              <div>
+                <span className="text-[9px] font-black uppercase tracking-widest text-indigo-400 bg-indigo-500/20 px-2.5 py-1 rounded-lg border border-indigo-500/30">
+                  ⚡ Smart Greeting
+                </span>
+                <h2 className="text-2xl font-black mt-2 leading-tight">
+                  {(() => {
+                    const hr = new Date().getHours();
+                    const username = profile?.username || 'User';
+                    if (hr < 12) return `Good morning, ${username}! 🌅`;
+                    if (hr < 17) return `Good afternoon, ${username}! ☀️`;
+                    if (hr < 21) return `Good evening, ${username}! 🌇`;
+                    return `Good night, ${username}! 🌌`;
+                  })()}
+                </h2>
+                <p className="text-slate-400 text-xs font-semibold leading-relaxed mt-1">
+                  You have <span className="text-amber-400 font-extrabold">{profile?.rewardsPoints?.toLocaleString() || 0}</span> reward points available to redeem.
+                </p>
+              </div>
+
+              {/* Dynamic Contextual Suggestion Block */}
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/10 text-xs space-y-2">
+                <span className="text-[8.5px] font-black uppercase tracking-widest text-amber-400 block">AI Suggestion for you:</span>
+                {activeRequests.length > 0 ? (
+                  <p className="text-slate-200 leading-normal font-medium">
+                    👉 You have an active booking for <span className="font-extrabold text-white">{activeRequests[0].serviceType}</span> at £{activeRequests[0].price || 25}. Keep track of your scheduling updates!
+                  </p>
+                ) : recommendations.length > 0 ? (
+                  <p className="text-slate-200 leading-normal font-medium">
+                    💡 Based on your recent local activity, we highly recommend booking <span className="font-extrabold text-white">{recommendations[0]?.serviceName}</span> by {recommendations[0]?.proName}!
+                  </p>
+                ) : (
+                  <p className="text-slate-200 leading-normal font-medium">
+                    ✨ Hoxton swap demand is peaking! Browse the local Marketplace to find verified neighborhood goods or list your unused items to earn bonus points.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <button 
+                  id="referral-invite-btn"
+                  onClick={() => onNavigateReferral?.()}
+                  className="bg-white hover:bg-slate-50 text-slate-950 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center space-x-2 active:scale-95 transition-all border-none cursor-pointer"
+                >
+                  <span>Invite & Earn 500pts</span>
+                  <ArrowRight size={14} />
+                </button>
+                <button 
+                  onClick={() => {
+                    haptics.light();
+                    alert("💡 Local AI Insight\n\nYour weekly local travel carbon footprint has reduced by 14% due to ridesharing options. Your favorite Shoreditch hub has 12 active listings available now!");
+                  }}
+                  className="bg-white/10 hover:bg-white/20 text-white px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center space-x-1.5 active:scale-95 transition-all border border-white/10 cursor-pointer"
+                >
+                  <span>AI Insight</span>
+                </button>
+              </div>
             </div>
           </motion.div>
 
@@ -1096,6 +1170,271 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
                 exit={{ opacity: 0, y: -15 }}
                 className="space-y-8"
               >
+                {/* Real-time Safety Alerts Banner */}
+                {safetyAlerts.filter(a => a.active).length > 0 && (
+                  <div className="space-y-2 mb-4 text-left">
+                    {safetyAlerts.filter(a => a.active).map((alert) => (
+                      <motion.div
+                        key={alert.id}
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        className={`p-4 rounded-2xl border flex items-start space-x-3 text-left relative overflow-hidden shadow-xs ${
+                          alert.severity === 'high' 
+                            ? 'bg-rose-500/10 border-rose-500/30 text-rose-950 dark:text-rose-200' 
+                            : 'bg-amber-500/10 border-amber-500/30 text-amber-950 dark:text-amber-200'
+                        }`}
+                      >
+                        <div className={`p-2 rounded-xl shrink-0 ${
+                          alert.severity === 'high' ? 'bg-rose-500/20 text-rose-500' : 'bg-amber-500/20 text-amber-500'
+                        }`}>
+                          <AlertCircle size={16} className="animate-pulse" />
+                        </div>
+                        <div className="flex-1 min-w-0 pr-8">
+                          <h5 className="text-[11px] font-black uppercase tracking-wider leading-none">
+                            {alert.title}
+                          </h5>
+                          <p className="text-[10px] opacity-80 mt-1 font-semibold leading-relaxed">
+                            {alert.message}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => {
+                            haptics.light();
+                            setSafetyAlerts(prev => prev.map(a => a.id === alert.id ? { ...a, active: false } : a));
+                          }}
+                          className="absolute right-3 top-3 p-1 rounded-full hover:bg-black/5 text-slate-400 dark:hover:bg-white/5 border-none bg-transparent cursor-pointer"
+                          title="Dismiss warning"
+                        >
+                          <X size={12} />
+                        </button>
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Dynamic Grid Layout: Community Trends & Nearby Services */}
+                <motion.div 
+                  variants={{
+                    hidden: { opacity: 0 },
+                    show: {
+                      opacity: 1,
+                      transition: {
+                        staggerChildren: 0.12,
+                        delayChildren: 0.05
+                      }
+                    }
+                  }}
+                  initial="hidden"
+                  animate="show"
+                  className="grid grid-cols-2 gap-4"
+                >
+                  {/* Community Trends Card */}
+                  <motion.div
+                    variants={{
+                      hidden: { opacity: 0, y: 25, scale: 0.95 },
+                      show: { 
+                        opacity: 1, 
+                        y: 0, 
+                        scale: 1,
+                        transition: { type: "spring", stiffness: 120, damping: 14 }
+                      }
+                    }}
+                    whileHover={{ y: -5, scale: 1.03, boxShadow: "0 10px 20px rgba(99,102,241,0.12)" }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => {
+                      haptics.light();
+                      alert("📈 Shoreditch Swaps & Trends Info\n\nActive tags in London E1:\n- #BicycleTuneUp (+55%)\n- #EcoCleaning (+42%)\n- #FuseboxRepair (+30%)\n\nTip: Post a service listing matching these tags to gain a search ranking boost!");
+                    }}
+                    className="p-5 bg-gradient-to-br from-indigo-50/80 to-purple-50/80 dark:from-slate-900 dark:to-purple-950/20 rounded-[32px] border border-indigo-100/40 dark:border-indigo-950/40 text-left flex flex-col justify-between h-48 relative overflow-hidden shadow-xs cursor-pointer transition-all duration-350"
+                  >
+                    <div className="absolute top-0 right-0 p-4 opacity-12">
+                      <TrendingUp size={48} className="text-indigo-600 dark:text-indigo-400" />
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[8px] font-black uppercase tracking-widest text-indigo-600 dark:text-indigo-400 bg-white dark:bg-slate-800 px-2 py-0.5 rounded-md border border-indigo-100/50">Trends</span>
+                      <h4 className="text-xs font-black text-slate-800 dark:text-slate-100 uppercase tracking-tight mt-1.5">Community Trends</h4>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-300 font-semibold">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-ping" />
+                        <span>#ShoreditchSwaps high demand</span>
+                      </div>
+                      <p className="text-[9px] text-slate-450 dark:text-slate-400 leading-normal font-medium">Bicycle tune-ups and electrical repairs trending up 45% this week in E1.</p>
+                    </div>
+                  </motion.div>
+
+                  {/* Nearby Services Card */}
+                  <motion.div
+                    variants={{
+                      hidden: { opacity: 0, y: 25, scale: 0.95 },
+                      show: { 
+                        opacity: 1, 
+                        y: 0, 
+                        scale: 1,
+                        transition: { type: "spring", stiffness: 120, damping: 14 }
+                      }
+                    }}
+                    whileHover={{ y: -5, scale: 1.03, boxShadow: "0 10px 20px rgba(16,185,129,0.12)" }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => {
+                      haptics.light();
+                      if ((window as any).__navigateTab) {
+                        (window as any).__navigateTab('services');
+                      }
+                    }}
+                    className="p-5 bg-gradient-to-br from-emerald-50/80 to-teal-50/80 dark:from-slate-900 dark:to-emerald-950/20 rounded-[32px] border border-emerald-100/40 dark:border-emerald-950/40 text-left flex flex-col justify-between h-48 relative overflow-hidden shadow-xs cursor-pointer transition-all duration-350"
+                  >
+                    <div className="absolute top-0 right-0 p-4 opacity-12">
+                      <MapPin size={48} className="text-emerald-600 dark:text-emerald-400" />
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[8px] font-black uppercase tracking-widest text-emerald-600 dark:text-emerald-400 bg-white dark:bg-slate-800 px-2 py-0.5 rounded-md border border-emerald-100/50">Proximity</span>
+                      <h4 className="text-xs font-black text-slate-800 dark:text-slate-100 uppercase tracking-tight mt-1.5">Nearby Services</h4>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-300 font-semibold">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        <span>12 Active Vetted Pros</span>
+                      </div>
+                      <p className="text-[9px] text-slate-450 dark:text-slate-400 leading-normal font-medium">Dr. Evelyn Carter & 3 trade specialists are within 500m right now.</p>
+                    </div>
+                  </motion.div>
+                </motion.div>
+
+                {/* Community Impact Widget with Dual Radial Progress SVG Chart */}
+                <motion.div
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="p-5 bg-gradient-to-br from-emerald-500/5 via-teal-500/5 to-slate-50 dark:from-slate-900 dark:to-emerald-950/20 rounded-[32px] border border-emerald-500/20 text-left space-y-4 shadow-sm"
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="text-[8px] font-black uppercase tracking-widest text-emerald-600 dark:text-emerald-400 bg-white dark:bg-slate-800 px-2.5 py-1 rounded-md border border-emerald-500/20">
+                        ☘ Community Cohesion
+                      </span>
+                      <h4 className="text-sm font-black text-slate-900 dark:text-white mt-2 uppercase tracking-tight">Community Impact Tracker</h4>
+                    </div>
+                    <span className="text-[8px] font-mono font-black text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                      Live London E1
+                    </span>
+                  </div>
+
+                  <div className="flex items-center space-x-6">
+                    {/* Concentric Dual Radial Progress Ring SVG */}
+                    <div className="relative w-28 h-28 shrink-0">
+                      <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90">
+                        {/* Track ring 1 */}
+                        <circle cx="60" cy="60" r="48" fill="transparent" stroke="currentColor" className="text-slate-100 dark:text-slate-800" strokeWidth="8" />
+                        {/* Outer Progress Ring (Emerald) - 84% completed */}
+                        <circle 
+                          cx="60" 
+                          cy="60" 
+                          r="48" 
+                          fill="transparent" 
+                          stroke="#10b981" 
+                          strokeWidth="8" 
+                          strokeDasharray={2 * Math.PI * 48}
+                          strokeDashoffset={2 * Math.PI * 48 * (1 - 0.84)}
+                          strokeLinecap="round" 
+                        />
+
+                        {/* Track ring 2 */}
+                        <circle cx="60" cy="60" r="34" fill="transparent" stroke="currentColor" className="text-slate-100 dark:text-slate-800" strokeWidth="8" />
+                        {/* Inner Progress Ring (Indigo) - 72% completed */}
+                        <circle 
+                          cx="60" 
+                          cy="60" 
+                          r="34" 
+                          fill="transparent" 
+                          stroke="#6366f1" 
+                          strokeWidth="8" 
+                          strokeDasharray={2 * Math.PI * 34}
+                          strokeDashoffset={2 * Math.PI * 34 * (1 - 0.72)}
+                          strokeLinecap="round" 
+                        />
+                      </svg>
+                      {/* Percent badge overlay */}
+                      <div className="absolute inset-0 flex flex-col items-center justify-center">
+                        <span className="text-xs font-black text-slate-800 dark:text-white leading-none">82%</span>
+                        <span className="text-[7.5px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Target</span>
+                      </div>
+                    </div>
+
+                    {/* Legend & Stats Details */}
+                    <div className="flex-1 space-y-3">
+                      <div className="space-y-1 text-left">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
+                          <span className="text-[10px] font-black text-slate-700 dark:text-slate-350">Volunteer Hours</span>
+                        </div>
+                        <div className="pl-4">
+                          <p className="text-xs font-extrabold text-slate-900 dark:text-white leading-none">42.5 Hours <span className="text-[9px] text-slate-400 font-bold">/ 50h weekly</span></p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1 text-left">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 shrink-0" />
+                          <span className="text-[10px] font-black text-slate-700 dark:text-slate-350">Resources Shared</span>
+                        </div>
+                        <div className="pl-4">
+                          <p className="text-xs font-extrabold text-slate-900 dark:text-white leading-none">18 Assets <span className="text-[9px] text-slate-400 font-bold">/ 25 items</span></p>
+                        </div>
+                      </div>
+
+                      <p className="text-[9.5px] text-slate-450 dark:text-slate-400 leading-normal font-semibold border-t border-slate-100 dark:border-slate-800 pt-1.5 text-left">
+                        🎉 Hoxton is 82% ahead of last month's neighborhood green-sharing targets! Keep it up!
+                      </p>
+                    </div>
+                  </div>
+                </motion.div>
+
+                {/* 🏠 Featured Shoreditch Rental Property Listing */}
+                <motion.section
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.15 }}
+                  className="p-6 bg-gradient-to-br from-indigo-50/40 via-white to-indigo-50/25 dark:from-slate-900 dark:via-slate-950 dark:to-indigo-950/20 border border-indigo-150/45 dark:border-indigo-950/45 rounded-[36px] text-left space-y-3 shadow-sm relative overflow-hidden"
+                >
+                  <div className="absolute top-0 right-0 p-4 opacity-5">
+                    <LifeBuoy size={72} className="text-indigo-600 dark:text-indigo-400 rotate-12" />
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center space-x-1.5">
+                      <Sparkles size={14} className="text-indigo-500 animate-pulse" />
+                      <span className="text-[9px] font-black uppercase text-indigo-650 dark:text-indigo-400 tracking-widest">
+                        Premium Neighborhood Listing
+                      </span>
+                    </div>
+                    <span className="text-[9px] font-black uppercase bg-emerald-50 dark:bg-emerald-950 text-emerald-650 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/50 px-2 py-0.5 rounded-lg">
+                      Available Now
+                    </span>
+                  </div>
+
+                  <h3 className="font-extrabold text-sm text-slate-800 dark:text-white uppercase tracking-tight">
+                    Featured Flat: 14 Kingsland Road
+                  </h3>
+
+                  <p className="text-[11px] text-slate-650 dark:text-slate-300 leading-relaxed font-semibold">
+                    This stunning two-bedroom apartment located at 14 Kingsland Road, Shoreditch, is available for £2,450 per month starting on July 1st, 2026. This home features gorgeous hardwood floors, convenient in-unit laundry, and a fully-equipped modern kitchen with high-end appliances, and offers convenient access to Shoreditch High Street station, nearby parks, and the vibrant local dining scene. Designed to flow naturally and highlight the very best features of urban living, this welcoming space is perfect for professionals seeking comfort and connectivity. Interested renters are politely invited to reach out for more information or to schedule a viewing today.
+                  </p>
+
+                  <div className="flex justify-between items-center pt-2 border-t border-slate-100 dark:border-slate-850">
+                    <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">
+                      Rent: £2,450 / month
+                    </span>
+                    <button
+                      onClick={() => {
+                        haptics.success();
+                        alert("Thank you for your interest! Connecting with the landlord via chat...");
+                      }}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all border-none cursor-pointer shadow-md shadow-indigo-600/10 active:scale-95"
+                    >
+                      Enquire Now
+                    </button>
+                  </div>
+                </motion.section>
                 {/* KonnectS Smart Activity Agenda & Weekly Calendar Strip */}
                 <section className="p-6 bg-white dark:bg-slate-950 border border-slate-100 dark:border-slate-850 rounded-[32px] text-left space-y-4 shadow-sm">
                   <div className="flex justify-between items-start">

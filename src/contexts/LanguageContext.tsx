@@ -627,18 +627,40 @@ const LanguageContext = createContext<LanguageContextType | undefined>(undefined
 
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const { profile } = useAuth();
-  const [language, setLanguageState] = useState<Language>('en');
-
-  useEffect(() => {
-    if (profile?.appLanguage && (['en', 'bn', 'pl', 'tr', 'so', 'cy', 'gd'] as string[]).includes(profile.appLanguage)) {
-      setLanguageState(profile.appLanguage as Language);
-    } else {
+  const [language, setLanguageState] = useState<Language>(() => {
+    if (typeof localStorage !== 'undefined') {
       const saved = localStorage.getItem('urbanNet_language') as Language;
       if (saved && ['en', 'bn', 'pl', 'tr', 'so', 'cy', 'gd'].includes(saved)) {
-        setLanguageState(saved);
+        return saved;
       }
     }
-  }, [profile?.appLanguage]);
+    return 'en';
+  });
+
+  useEffect(() => {
+    let active = true;
+    if (profile?.appLanguage && (['en', 'bn', 'pl', 'tr', 'so', 'cy', 'gd'] as string[]).includes(profile.appLanguage)) {
+      if (profile.appLanguage !== language) {
+        Promise.resolve().then(() => {
+          if (active) setLanguageState(profile.appLanguage as Language);
+        });
+      }
+    } else {
+      if (typeof localStorage !== 'undefined') {
+        const saved = localStorage.getItem('urbanNet_language') as Language;
+        if (saved && ['en', 'bn', 'pl', 'tr', 'so', 'cy', 'gd'].includes(saved)) {
+          if (saved !== language) {
+            Promise.resolve().then(() => {
+              if (active) setLanguageState(saved);
+            });
+          }
+        }
+      }
+    }
+    return () => {
+      active = false;
+    };
+  }, [profile?.appLanguage, language]);
 
   const setLanguage = async (lang: Language) => {
     setLanguageState(lang);

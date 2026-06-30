@@ -18,9 +18,11 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({ onScanSuccess, o
   const [uploadedFile, setUploadedFile] = useState<string | null>(null);
 
   useEffect(() => {
+    let activeStream: MediaStream | null = null;
     // Attempt standard browser media camera permissions
     navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
       .then((mediaStream) => {
+        activeStream = mediaStream;
         setStream(mediaStream);
         if (videoRef.current) {
           videoRef.current.srcObject = mediaStream;
@@ -33,8 +35,8 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({ onScanSuccess, o
 
     // Cleanup camera feed on close
     return () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+      if (activeStream) {
+        activeStream.getTracks().forEach(track => track.stop());
       }
     };
   }, []);

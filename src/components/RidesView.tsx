@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Car, MapPin, Navigation as NavIcon, Star, ArrowRight, PoundSterling, Clock, Check, X, Shield, Sparkles, Phone, MessageSquare, AlertCircle, Map as MapIcon, Train, Ticket, Activity, TrendingDown, Info, Download } from 'lucide-react';
+import { Car, MapPin, Navigation as NavIcon, Star, ArrowRight, PoundSterling, Clock, Check, X, Shield, Sparkles, Phone, MessageSquare, AlertCircle, Map as MapIcon, Train, Ticket, Activity, TrendingDown, Info, Download, Mic } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { APIProvider, Map, Marker } from '@vis.gl/react-google-maps';
 import { QuickSOS } from './QuickSOS';
@@ -93,79 +93,195 @@ export function RidesView() {
   const [showTflTicketModal, setShowTflTicketModal] = useState(false);
   const [isTrafficPeak, setIsTrafficPeak] = useState(true); // Active standard PM peak congestion
   const [tflSuggestion, setTflSuggestion] = useState<any>(null);
+  const [recurringSuggestions, setRecurringSuggestions] = useState<any[]>([]);
 
   useEffect(() => {
+    // Initialize global_voice_command_history if empty to seed realistic suggestions
+    const seedHistory = [
+      { text: "book a cab to Camden Market at 8:30 am", timestamp: new Date(Date.now() - 3600000 * 2).toISOString() },
+      { text: "need a ride to Heathrow Airport on Wednesday at 14:00", timestamp: new Date(Date.now() - 3600000 * 24).toISOString() },
+      { text: "book a ride to Camden Market at 8:30 am on Monday", timestamp: new Date(Date.now() - 3600000 * 48).toISOString() },
+      { text: "cab to London Bridge at 6:15 pm", timestamp: new Date(Date.now() - 3600000 * 5).toISOString() },
+      { text: "get me a car to Camden Market at 8:30 am", timestamp: new Date(Date.now() - 3600000 * 72).toISOString() }
+    ];
+
+    try {
+      if (!localStorage.getItem('global_voice_command_history')) {
+        localStorage.setItem('global_voice_command_history', JSON.stringify(seedHistory));
+      }
+    } catch (e) {
+      console.error(e);
+    }
+
+    const loadHistoryAndAnalyze = () => {
+      try {
+        const historyRaw = localStorage.getItem('global_voice_command_history');
+        const history = historyRaw ? JSON.parse(historyRaw) : [];
+        if (!Array.isArray(history) || history.length === 0) return;
+
+        // Group suggestions based on destination keywords and frequency
+        const patternMap: Record<string, { count: number, times: string[], text: string, fare: string }> = {};
+        
+        history.forEach((cmd: any) => {
+          const text = (cmd.text || '').toLowerCase();
+          let matchedDest = '';
+          let estFare = '12.50';
+
+          if (text.includes('camden')) {
+            matchedDest = 'Camden Market';
+            estFare = '14.20';
+          } else if (text.includes('heathrow')) {
+            matchedDest = 'Heathrow Airport';
+            estFare = '42.00';
+          } else if (text.includes('piccadilly')) {
+            matchedDest = 'Piccadilly Circus';
+            estFare = '9.80';
+          } else if (text.includes('london bridge')) {
+            matchedDest = 'London Bridge';
+            estFare = '8.50';
+          } else if (text.includes('old street') || text.includes('shoreditch')) {
+            matchedDest = 'Shoreditch Office';
+            estFare = '6.50';
+          }
+
+          if (matchedDest) {
+            let timeFound = '09:00';
+            const timeMatch = cmd.text.match(/(\d{1,2}:\d{2})\s*(am|pm)?/i) || cmd.text.match(/at\s*(\d{1,2}(:\d{2})?\s*(am|pm)?)/i);
+            if (timeMatch) {
+              timeFound = timeMatch[0].replace(/^at\s+/i, '').trim();
+            }
+
+            if (!patternMap[matchedDest]) {
+              patternMap[matchedDest] = {
+                count: 0,
+                times: [],
+                text: cmd.text,
+                fare: estFare
+              };
+            }
+            patternMap[matchedDest].count += 1;
+            if (!patternMap[matchedDest].times.includes(timeFound)) {
+              patternMap[matchedDest].times.push(timeFound);
+            }
+          }
+        });
+
+        const list = Object.keys(patternMap).map(dest => {
+          const item = patternMap[dest];
+          let frequency = 'Occasional';
+          if (item.count >= 3) frequency = 'Daily Commute';
+          else if (item.count >= 2) frequency = 'Highly Recurring';
+
+          return {
+            destination: dest,
+            frequency,
+            times: item.times.join(', '),
+            count: item.count,
+            fare: item.fare,
+            commandText: item.text
+          };
+        }).sort((a, b) => b.count - a.count);
+
+        setRecurringSuggestions(list);
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    loadHistoryAndAnalyze();
+
+    window.addEventListener('global_voice_command_logged', loadHistoryAndAnalyze);
+    return () => window.removeEventListener('global_voice_command_logged', loadHistoryAndAnalyze);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
     if (!destination) {
-      setTflSuggestion(null);
+      Promise.resolve().then(() => {
+        if (active) setTflSuggestion(null);
+      });
       return;
     }
     const destLower = destination.toLowerCase();
     if (destLower.includes('camden')) {
-      setTflSuggestion({
-        from: 'Shoreditch / Old Street',
-        to: 'Camden Market',
-        stations: 'Moorgate Station Loop ➜ Northern Line ➜ Camden Town',
-        routeType: 'Underground Tube Connection',
-        duration: '11 mins (Save 24 mins vs Cab)',
-        costOnOyster: '2.80',
-        congestionLevel: 'CRITICAL SEVERE CONGESTION',
-        carbonSaved: '1.4kg CO2',
-        tubeLine: 'Northern Line',
-        lineColor: 'bg-slate-900 border-slate-750 text-white'
+      Promise.resolve().then(() => {
+        if (active) setTflSuggestion({
+          from: 'Shoreditch / Old Street',
+          to: 'Camden Market',
+          stations: 'Moorgate Station Loop ➜ Northern Line ➜ Camden Town',
+          routeType: 'Underground Tube Connection',
+          duration: '11 mins (Save 24 mins vs Cab)',
+          costOnOyster: '2.80',
+          congestionLevel: 'CRITICAL SEVERE CONGESTION',
+          carbonSaved: '1.4kg CO2',
+          tubeLine: 'Northern Line',
+          lineColor: 'bg-slate-900 border-slate-750 text-white'
+        });
       });
     } else if (destLower.includes('heathrow')) {
-      setTflSuggestion({
-        from: 'Liverpool Street Station Lobby',
-        to: 'Heathrow Airport',
-        stations: 'Elizabeth Line (Platform B) ➜ Heathrow Express Terminal',
-        routeType: 'National Rail & Express Integration',
-        duration: '35 mins (Save 45 mins vs Cab)',
-        costOnOyster: '12.20',
-        congestionLevel: 'HIGHWAY A40 GRIDLOCK DELAYS',
-        carbonSaved: '5.2kg CO2',
-        tubeLine: 'Elizabeth Line',
-        lineColor: 'bg-purple-900 border-purple-800 text-white'
+      Promise.resolve().then(() => {
+        if (active) setTflSuggestion({
+          from: 'Liverpool Street Station Lobby',
+          to: 'Heathrow Airport',
+          stations: 'Elizabeth Line (Platform B) ➜ Heathrow Express Terminal',
+          routeType: 'National Rail & Express Integration',
+          duration: '35 mins (Save 45 mins vs Cab)',
+          costOnOyster: '12.20',
+          congestionLevel: 'HIGHWAY A40 GRIDLOCK DELAYS',
+          carbonSaved: '5.2kg CO2',
+          tubeLine: 'Elizabeth Line',
+          lineColor: 'bg-purple-900 border-purple-800 text-white'
+        });
       });
     } else if (destLower.includes('piccadilly')) {
-      setTflSuggestion({
-        from: 'Old Street Tube',
-        to: 'Piccadilly Circus',
-        stations: 'Northern Line ➜ King\'s Cross St. Pancras ➜ Piccadilly Line',
-        routeType: 'Double-Tube Rapid Transit',
-        duration: '14 mins (Save 18 mins vs Cab)',
-        costOnOyster: '2.80',
-        congestionLevel: 'WEST END GRIDLOCK',
-        carbonSaved: '1.8kg CO2',
-        tubeLine: 'Northern / Piccadilly',
-        lineColor: 'bg-blue-900 border-blue-900 text-white'
+      Promise.resolve().then(() => {
+        if (active) setTflSuggestion({
+          from: 'Old Street Tube',
+          to: 'Piccadilly Circus',
+          stations: 'Northern Line ➜ King\'s Cross St. Pancras ➜ Piccadilly Line',
+          routeType: 'Double-Tube Rapid Transit',
+          duration: '14 mins (Save 18 mins vs Cab)',
+          costOnOyster: '2.80',
+          congestionLevel: 'WEST END GRIDLOCK',
+          carbonSaved: '1.8kg CO2',
+          tubeLine: 'Northern / Piccadilly',
+          lineColor: 'bg-blue-900 border-blue-900 text-white'
+        });
       });
     } else if (destLower.includes('bridge') || destLower.includes('london')) {
-      setTflSuggestion({
-        from: 'Shoreditch High St',
-        to: 'London Bridge Station',
-        stations: 'London Overground ➜ Canada Water ➜ Jubilee Line',
-        routeType: 'Overground & Tube Rapid',
-        duration: '12 mins (Save 15 mins vs Cab)',
-        costOnOyster: '2.80',
-        congestionLevel: 'BRIDGE CONGESTION CHARGE DEVIATION',
-        carbonSaved: '1.1kg CO2',
-        tubeLine: 'London Overground',
-        lineColor: 'bg-orange-600 border-orange-500 text-white'
+      Promise.resolve().then(() => {
+        if (active) setTflSuggestion({
+          from: 'Shoreditch High St',
+          to: 'London Bridge Station',
+          stations: 'London Overground ➜ Canada Water ➜ Jubilee Line',
+          routeType: 'Overground & Tube Rapid',
+          duration: '12 mins (Save 15 mins vs Cab)',
+          costOnOyster: '2.80',
+          congestionLevel: 'BRIDGE CONGESTION CHARGE DEVIATION',
+          carbonSaved: '1.1kg CO2',
+          tubeLine: 'London Overground',
+          lineColor: 'bg-orange-600 border-orange-500 text-white'
+        });
       });
     } else {
-      setTflSuggestion({
-        from: 'Old Street Transit Hub',
-        to: destination,
-        stations: `Moorgate Station ➜ TfL Rail Loop ➜ ${destination} Terminal`,
-        routeType: 'London Transit Multi-Modal Route',
-        duration: '15 mins (Estimated bypass routing)',
-        costOnOyster: '3.40',
-        congestionLevel: 'ROUTE CONGESTION WARNING',
-        carbonSaved: '1.2kg CO2',
-        tubeLine: 'TfL Rail Network',
-        lineColor: 'bg-sky-600 border-sky-500 text-white'
+      Promise.resolve().then(() => {
+        if (active) setTflSuggestion({
+          from: 'Old Street Transit Hub',
+          to: destination,
+          stations: `Moorgate Station ➜ TfL Rail Loop ➜ ${destination} Terminal`,
+          routeType: 'London Transit Multi-Modal Route',
+          duration: '15 mins (Estimated bypass routing)',
+          costOnOyster: '3.40',
+          congestionLevel: 'ROUTE CONGESTION WARNING',
+          carbonSaved: '1.2kg CO2',
+          tubeLine: 'TfL Rail Network',
+          lineColor: 'bg-sky-600 border-sky-500 text-white'
+        });
       });
     }
+    return () => {
+      active = false;
+    };
   }, [destination]);
 
   const MOCK_HUBS = [
@@ -180,11 +296,17 @@ export function RidesView() {
   ];
 
   useEffect(() => {
-    setLoading(true);
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) setLoading(true);
+    });
     const timer = setTimeout(() => {
-      setLoading(false);
+      if (active) setLoading(false);
     }, 700);
-    return () => clearTimeout(timer);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
   }, []);
 
   // Setup Global auth failure and console error interception to catch ApiProjectMapError
@@ -204,14 +326,18 @@ export function RidesView() {
       const msg = args.map(arg => String(arg)).join(' ');
       if (msg.includes('ApiProjectMapError') || msg.includes('Google Maps') || msg.includes('google.maps')) {
         (window as any).gmapsHasFailed = true;
-        setMapLoadError(true);
+        Promise.resolve().then(() => {
+          setMapLoadError(true);
+        });
       }
       originalConsoleError.apply(console, args);
     };
 
     if (!GOOGLE_MAPS_API_KEY) {
       (window as any).gmapsHasFailed = true;
-      setMapLoadError(true);
+      Promise.resolve().then(() => {
+        setMapLoadError(true);
+      });
     }
 
     return () => {
@@ -246,13 +372,21 @@ export function RidesView() {
 
   // Calculate fare dynamically based on destination length
   useEffect(() => {
+    let active = true;
     if (!destination) {
-      setFare('12.50');
+      Promise.resolve().then(() => {
+        if (active) setFare('12.50');
+      });
       return;
     }
     const len = destination.length;
     const baseFare = 6.20 + (len * 0.45);
-    setFare(baseFare.toFixed(2));
+    Promise.resolve().then(() => {
+      if (active) setFare(baseFare.toFixed(2));
+    });
+    return () => {
+      active = false;
+    };
   }, [destination]);
 
   // Handle Finding Nearby Drivers simulation
@@ -294,8 +428,11 @@ export function RidesView() {
   // Mock Active journey timeline simulation
   useEffect(() => {
     let interval: any;
+    let active = true;
     if (step === 3) {
-      setSimulationTimer(120); // 2 minutes countdown
+      Promise.resolve().then(() => {
+        if (active) setSimulationTimer(120); // 2 minutes countdown
+      });
       localStorage.setItem('active_ride_active', 'true');
       localStorage.setItem('active_ride_driver', selectedDriver?.driver || 'Cab Driver');
       localStorage.setItem('active_ride_destination', destination || 'Shoreditch High St');
@@ -323,6 +460,7 @@ export function RidesView() {
       localStorage.removeItem('active_ride_timer');
     }
     return () => {
+      active = false;
       clearInterval(interval);
       localStorage.removeItem('active_ride_active');
       localStorage.removeItem('active_ride_driver');
@@ -351,7 +489,15 @@ export function RidesView() {
     };
     
     const existingRaw = localStorage.getItem('konnects_scheduled_rides');
-    const existingRides = existingRaw ? JSON.parse(existingRaw) : [];
+    let existingRides = [];
+    try {
+      existingRides = existingRaw ? JSON.parse(existingRaw) : [];
+      if (!Array.isArray(existingRides)) {
+        existingRides = [];
+      }
+    } catch {
+      existingRides = [];
+    }
     localStorage.setItem('konnects_scheduled_rides', JSON.stringify([...existingRides, newRide]));
     
     alert(`Success: Ride scheduled! Our Google Maps proactive monitoring will inspect live traffic & forecast delays to alert you of the perfect departure time.`);
@@ -875,6 +1021,64 @@ export function RidesView() {
                 </div>
               )}
             </div>
+
+            {/* Voice Command Recurring Ride Patterns Summary */}
+            {recurringSuggestions.length > 0 && (
+              <div className="bg-gradient-to-br from-indigo-950 to-slate-900 rounded-[32px] p-6 text-white text-left space-y-4 shadow-xl border border-indigo-900/40 relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
+                  <Mic size={100} />
+                </div>
+                
+                <div className="flex justify-between items-start">
+                  <div className="space-y-1">
+                    <span className="bg-indigo-500/10 text-indigo-300 text-[7px] font-mono font-black px-2 py-0.5 rounded-full uppercase tracking-widest border border-indigo-500/20 inline-flex items-center space-x-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>Voice Engine Insights</span>
+                    </span>
+                    <h3 className="text-xs font-black uppercase tracking-tight text-white leading-tight">
+                      Suggested Recurring Cab Patterns
+                    </h3>
+                  </div>
+                  <div className="p-2 bg-indigo-500/10 rounded-xl border border-indigo-500/20 text-indigo-400">
+                    <Clock size={14} className="animate-pulse" />
+                  </div>
+                </div>
+
+                <p className="text-[10px] text-slate-400 font-medium leading-relaxed">
+                  We detected recurring transit commands in your voice log history. Tap to instantly fill and configure your cab selection.
+                </p>
+
+                <div className="space-y-2.5">
+                  {recurringSuggestions.map((pattern, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        haptics.success();
+                        setDestination(pattern.destination);
+                        setFare(pattern.fare);
+                      }}
+                      className="w-full p-3 bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 rounded-2xl text-left transition-all active:scale-98 flex items-center justify-between group cursor-pointer"
+                    >
+                      <div className="flex items-center space-x-3 min-w-0">
+                        <div className="p-2 bg-indigo-900/30 text-indigo-400 group-hover:bg-indigo-600 group-hover:text-white rounded-xl border border-indigo-800/30 transition-all">
+                          <Mic size={12} />
+                        </div>
+                        <div className="min-w-0">
+                          <h4 className="text-[11px] font-extrabold text-white truncate">{pattern.destination}</h4>
+                          <p className="text-[8px] text-indigo-300 font-bold uppercase tracking-wide mt-0.5">
+                            {pattern.frequency} • {pattern.times}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="text-[11.5px] font-black text-white font-mono block">£{pattern.fare}</span>
+                        <span className="text-[7.5px] text-slate-500 font-bold uppercase block">{pattern.count}x used</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Quick Suggestions */}
             <div className="space-y-4 pt-2">

@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
-import { User, Settings, Shield, Award, CreditCard, Wrench, FileText, Share2, LogOut, Camera, ChevronRight, Copy, Check, MessageCircle, Mail, MapPin, MessageSquare, Heart, Trash2, ShoppingBag, ToggleLeft, ToggleRight, ArrowLeft, Leaf, RotateCw, X, ShieldCheck, CheckCircle, RefreshCw, Video, Activity, Wifi, Database, Cpu, HardDrive, Battery } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { User, Settings, Shield, Award, CreditCard, Wrench, FileText, Share2, LogOut, Camera, ChevronRight, Copy, Check, MessageCircle, Mail, MapPin, MessageSquare, Heart, Trash2, ShoppingBag, ToggleLeft, ToggleRight, ArrowLeft, Leaf, RotateCw, X, ShieldCheck, CheckCircle, RefreshCw, Video, Activity, Wifi, Database, Cpu, HardDrive, Battery, Mic, Globe } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage, Language } from '../contexts/LanguageContext';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -15,16 +15,96 @@ import { QuickSOS } from './QuickSOS';
 import { haptics } from '../utils/haptics';
 import { ExpenseInsight } from './ExpenseInsight';
 import { SettingsEditor } from './SettingsEditor';
+import { VerificationStatus } from './VerificationStatus';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, BarChart, Bar, Cell, Legend } from 'recharts';
 import { jsPDF } from 'jspdf';
 
-type SubView = 'main' | 'history' | 'receipts' | 'rewards' | 'verification' | 'settings' | 'invite' | 'edit' | 'saved' | 'worker_setup' | 'impact' | 'addresses' | 'appearance' | 'swap_dashboard' | 'financial' | 'systems_dashboard';
+type SubView = 'main' | 'history' | 'receipts' | 'rewards' | 'verification' | 'settings' | 'invite' | 'edit' | 'saved' | 'worker_setup' | 'impact' | 'addresses' | 'appearance' | 'swap_dashboard' | 'financial' | 'systems_dashboard' | 'voice_logs';
 
 export function ProfileView() {
   const { user, profile, logout } = useAuth();
   const { language, setLanguage, t } = useLanguage();
   const [view, setView] = useState<SubView>('main');
   const [history, setHistory] = useState<ServiceBooking[]>([]);
+  
+  // Custom states for the floating language selector and voice logs
+  const [showLanguageDropdown, setShowLanguageDropdown] = useState(false);
+  const [voiceHistory, setVoiceHistory] = useState<Array<{ text: string; timestamp: string }>>([]);
+  const [reexecutingCmd, setReexecutingCmd] = useState<string | null>(null);
+
+  const loadVoiceHistory = () => {
+    try {
+      const raw = localStorage.getItem('global_voice_command_history');
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(parsed)) {
+        setVoiceHistory(parsed);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    loadVoiceHistory();
+  }, [view]);
+
+  const exportDataAsJSON = () => {
+    try {
+      haptics.success();
+      
+      const exportPayload = {
+        exportedAt: new Date().toISOString(),
+        user: {
+          uid: user?.uid || '',
+          email: user?.email || '',
+          username: profile?.username || '',
+          firstName: profile?.firstName || '',
+          lastName: profile?.lastName || '',
+        },
+        serviceBookings: history.map(booking => ({
+          id: booking.id,
+          serviceName: (booking as any).serviceName || (booking as any).title || booking.serviceType || 'Service Booking',
+          providerName: (booking as any).providerName || 'Local Provider',
+          price: booking.price,
+          status: booking.status,
+          date: (booking as any).date || (booking as any).scheduledAt || booking.createdAt || '',
+          autoRenew: (booking as any).autoRenew || false,
+        })),
+        marketplaceTransactions: (pastMarketplaceOrders || []).map(order => ({
+          id: order.id,
+          title: order.title,
+          price: order.price,
+          date: order.date,
+          seller: order.seller,
+          condition: order.condition,
+        }))
+      };
+
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportPayload, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `konnects_user_data_export_${new Date().toISOString().slice(0, 10)}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+
+      // Show toast notification
+      const notificationEvent = new CustomEvent('urbanNet_new_notification', {
+        detail: {
+          id: 'data-export-' + Date.now(),
+          type: 'system',
+          title: '📥 Data Export Complete',
+          message: 'Your completed bookings & transaction history has been downloaded successfully as JSON.',
+          timestamp: new Date().toLocaleTimeString(),
+          isRead: false
+        }
+      });
+      window.dispatchEvent(notificationEvent);
+    } catch (err) {
+      console.error('Failed to export data:', err);
+      alert('Failed to generate JSON data export.');
+    }
+  };
   const [savedItems, setSavedItems] = useState<MarketplaceItem[]>([]);
   const [copySuccess, setCopySuccess] = useState(false);
 
@@ -125,15 +205,26 @@ export function ProfileView() {
     return parseInt(localStorage.getItem('contribution_score') || '1840');
   });
   const [downloadedCityCaches, setDownloadedCityCaches] = useState<string[]>(() => {
-    const val = localStorage.getItem('downloaded_city_caches');
-    return val ? JSON.parse(val) : ['London'];
+    try {
+      const val = localStorage.getItem('downloaded_city_caches');
+      return val ? JSON.parse(val) : ['London'];
+    } catch {
+      return ['London'];
+    }
   });
   const [customVoiceWorkflows, setCustomVoiceWorkflows] = useState<Array<{ phrase: string; action: string }>>(() => {
-    const val = localStorage.getItem('custom_voice_workflows');
-    return val ? JSON.parse(val) : [
-      { phrase: 'clean my floor', action: 'book_cleaning_service' },
-      { phrase: 'find a ride to heathrow', action: 'request_airport_taxi' }
-    ];
+    try {
+      const val = localStorage.getItem('custom_voice_workflows');
+      return val ? JSON.parse(val) : [
+        { phrase: 'clean my floor', action: 'book_cleaning_service' },
+        { phrase: 'find a ride to heathrow', action: 'request_airport_taxi' }
+      ];
+    } catch {
+      return [
+        { phrase: 'clean my floor', action: 'book_cleaning_service' },
+        { phrase: 'find a ride to heathrow', action: 'request_airport_taxi' }
+      ];
+    }
   });
   const [recordingPhrase, setRecordingPhrase] = useState('');
   const [selectedAction, setSelectedAction] = useState('book_cleaning_service');
@@ -146,6 +237,7 @@ export function ProfileView() {
 
   useEffect(() => {
     let timerID: any;
+    let active = true;
     if (showWorkerIDModal) {
       timerID = setInterval(() => {
         setRotateSecondsLeft(prev => {
@@ -157,24 +249,52 @@ export function ProfileView() {
         });
       }, 1000);
     } else {
-      setRotateSecondsLeft(10);
+      Promise.resolve().then(() => {
+        if (active) setRotateSecondsLeft(10);
+      });
     }
-    return () => clearInterval(timerID);
+    return () => {
+      active = false;
+      clearInterval(timerID);
+    };
   }, [showWorkerIDModal]);
 
   useEffect(() => {
+    let active = true;
     if (profile?.savedAddresses) {
-      setAddresses(profile.savedAddresses);
+      Promise.resolve().then(() => {
+        if (active) setAddresses(profile.savedAddresses);
+      });
     }
+    return () => {
+      active = false;
+    };
   }, [profile?.savedAddresses]);
 
   const toggleWorkerMode = async () => {
     if (!profile?.uid) return;
+    
+    // When activating Worker Mode, validate if they have completed vehicle/ID verification
+    const isActivating = !profile.isWorkerMode;
+    const hasSubmittedVerification = localStorage.getItem('konnects_vehicle_proof_submitted') === 'true' || profile?.verificationStatus === 'verified' || profile?.verificationStatus === 'pending';
+    
+    if (isActivating && !hasSubmittedVerification) {
+      haptics.heavy();
+      const goToVerify = window.confirm(
+        "Verification Required:\n\nTo activate Worker Mode and access service provider dashboards, you must first submit proof of your identity, driver's licence, vehicle registration (RC), and insurance documents.\n\nWould you like to open the secure Verification panel now?"
+      );
+      if (goToVerify) {
+        setView('verification');
+      }
+      return;
+    }
+
     try {
       await updateDoc(doc(db, 'users', profile.uid), {
         isWorkerMode: !profile.isWorkerMode,
         updatedAt: serverTimestamp()
       });
+      haptics.success();
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `users/${profile.uid}`);
     }
@@ -313,24 +433,24 @@ export function ProfileView() {
   };
 
   useEffect(() => {
+    let active = true;
     if (profile) {
-      setIsOnline(profile.isOnline || false);
-      setEditingWorkerType(profile.workerType || 'other');
-      if (profile.appLanguage) {
-        setSelectedLang(profile.appLanguage);
-      }
+      Promise.resolve().then(() => {
+        if (active) {
+          setIsOnline(profile.isOnline || false);
+          setEditingWorkerType(profile.workerType || 'other');
+          if (profile.appLanguage) {
+            setSelectedLang(profile.appLanguage);
+          }
+        }
+      });
     }
+    return () => {
+      active = false;
+    };
   }, [profile]);
 
-  useEffect(() => {
-    if (view === 'history' || view === 'receipts') {
-      fetchHistory();
-    } else if (view === 'saved') {
-      fetchSavedItems();
-    }
-  }, [view, profile?.savedItems]);
-
-  const fetchHistory = async () => {
+  const fetchHistory = useCallback(async () => {
     if (!profile?.uid) return;
     try {
       const q = query(
@@ -362,9 +482,9 @@ export function ProfileView() {
         handleFirestoreError(e, OperationType.LIST, 'bookings');
       }
     }
-  };
+  }, [profile]);
 
-  const fetchSavedItems = async () => {
+  const fetchSavedItems = useCallback(async () => {
     if (!profile?.savedItems?.length) {
       setSavedItems([]);
       return;
@@ -377,7 +497,23 @@ export function ProfileView() {
     } catch (e) {
       handleFirestoreError(e, OperationType.LIST, 'items');
     }
-  };
+  }, [profile]);
+
+  useEffect(() => {
+    let active = true;
+    if (view === 'history' || view === 'receipts') {
+      Promise.resolve().then(() => {
+        if (active) fetchHistory();
+      });
+    } else if (view === 'saved') {
+      Promise.resolve().then(() => {
+        if (active) fetchSavedItems();
+      });
+    }
+    return () => {
+      active = false;
+    };
+  }, [view, fetchHistory, fetchSavedItems]);
 
   const handleUpdateProfile = async () => {
     if (!profile?.uid) return;
@@ -600,6 +736,7 @@ export function ProfileView() {
   const menuItems = [
     { icon: RefreshCw, label: t('profile.title').includes('Profile') ? 'Swap Activity Dashboard' : 'সোয়াপ অ্যাক্টিভিটি ড্যাশবোর্ড', value: 'swap_dashboard', color: 'bg-indigo-50 text-indigo-600' },
     { icon:Award, label: t('profile.title').includes('Profile') ? 'Rewards & Referrals' : 'পুরষ্কার এবং রেফারেল', value: 'rewards', color: 'bg-amber-50 text-amber-600' },
+    { icon: Mic, label: t('profile.title').includes('Profile') ? 'Voice Activity Logs' : 'ভয়েস অ্যাক্টিভিটি লগ', value: 'voice_logs', color: 'bg-teal-50 text-teal-600' },
     { icon: Leaf, label: t('profile.title').includes('Profile') ? 'Community Impact & Stats' : 'কমিউনিটি ইমপ্যাক্ট ও পরিসংখ্যান', value: 'impact', color: 'bg-emerald-50 text-emerald-600' },
     { icon: MapPin, label: t('profile.title').includes('Profile') ? 'Saved Addresses' : 'সংরক্ষিত ঠিকানা', value: 'addresses', color: 'bg-sky-50 text-sky-600' },
     { icon: MessageSquare, label: t('profile.title').includes('Profile') ? 'Provide Feedback' : 'মতামত জানান', value: 'feedback_trigger', color: 'bg-pink-50 text-pink-600' },
@@ -809,7 +946,53 @@ export function ProfileView() {
                       </button>
                     )}
                   </div>
-                  <div className="pointer-events-auto">
+                  <div className="pointer-events-auto flex items-center space-x-2">
+                    {/* Floating Language Dropdown Selector */}
+                    <div className="relative">
+                      <button 
+                        type="button"
+                        onClick={() => { haptics.light(); setShowLanguageDropdown(!showLanguageDropdown); }}
+                        className="p-2 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl flex items-center space-x-1 hover:bg-slate-50 transition-all cursor-pointer shadow-sm animate-fade-in"
+                      >
+                        <Globe size={14} className="text-slate-500" />
+                        <span className="text-[10px] font-black uppercase tracking-wider">
+                          {language === 'en' ? '🇬🇧 EN' : '🇧🇩 BN'}
+                        </span>
+                      </button>
+                      {showLanguageDropdown && (
+                        <div className="absolute right-0 mt-2 bg-white dark:bg-slate-900 border border-slate-150 dark:border-slate-800 rounded-2xl p-1.5 shadow-xl z-50 min-w-[120px] space-y-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              haptics.success();
+                              setLanguage('en');
+                              setShowLanguageDropdown(false);
+                            }}
+                            className={`w-full text-left p-2.5 rounded-xl text-[10px] font-bold uppercase tracking-wider flex items-center space-x-2 border-none bg-transparent cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-850 ${
+                              language === 'en' ? 'bg-slate-50 dark:bg-slate-850 text-indigo-600' : 'text-slate-705 dark:text-slate-300'
+                            }`}
+                          >
+                            <span>🇬🇧</span>
+                            <span>English (UK)</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              haptics.success();
+                              setLanguage('bn');
+                              setShowLanguageDropdown(false);
+                            }}
+                            className={`w-full text-left p-2.5 rounded-xl text-[10px] font-bold uppercase tracking-wider flex items-center space-x-2 border-none bg-transparent cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-850 ${
+                              language === 'bn' ? 'bg-slate-50 dark:bg-slate-850 text-indigo-600' : 'text-slate-705 dark:text-slate-300'
+                            }`}
+                          >
+                            <span>🇧🇩</span>
+                            <span>Bengali</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
                     <button 
                       onClick={toggleWorkerMode}
                       className={`flex flex-col items-center p-2 rounded-2xl border transition-all ${
@@ -841,6 +1024,31 @@ export function ProfileView() {
               <div className="flex flex-col items-center">
                  <h1 className="text-2xl font-bold tracking-tight mb-1">{profile?.username}</h1>
                  <p className="text-slate-400 text-xs font-medium">{profile?.email}</p>
+                  
+                  {/* Visual verification badge that updates based on document approval status */}
+                  <div className="mt-2.5 flex justify-center">
+                    {profile?.verificationStatus === 'verified' ? (
+                      <div onClick={() => { haptics.light(); setView('verification'); }} className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center space-x-1.5 cursor-pointer select-none transition-all">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_6px_#10b981]" />
+                        <span>Verified Pro • Active Permissions</span>
+                      </div>
+                    ) : profile?.verificationStatus === 'pending' ? (
+                      <div onClick={() => { haptics.light(); setView('verification'); }} className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/20 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center space-x-1.5 cursor-pointer select-none transition-all">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shadow-[0_0_6px_#f59e0b] animate-pulse" />
+                        <span>Under Review • Inactive Permissions</span>
+                      </div>
+                    ) : profile?.verificationStatus === 'rejected' ? (
+                      <div onClick={() => { haptics.light(); setView('verification'); }} className="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/20 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center space-x-1.5 cursor-pointer select-none transition-all">
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shadow-[0_0_6px_#ef4444]" />
+                        <span>Verification Rejected • Action Needed</span>
+                      </div>
+                    ) : (
+                      <div onClick={() => { haptics.light(); setView('verification'); }} className="px-3 py-1.5 bg-slate-500/10 hover:bg-slate-500/20 text-slate-600 dark:text-slate-300 border border-slate-500/20 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center space-x-1.5 cursor-pointer select-none transition-all">
+                        <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                        <span>Unverified • Tap to Verify ID & Vehicle</span>
+                      </div>
+                    )}
+                  </div>
               </div>
               <div className="mt-4 flex items-center justify-center space-x-3">
                  <div className="px-4 py-1.5 bg-amber-50 text-amber-600 rounded-full text-xs font-bold flex items-center space-x-2">
@@ -1243,7 +1451,49 @@ export function ProfileView() {
 
              {view === 'rewards' && (
                 <div className="space-y-6">
-                   {/* referral stats cards */}
+                   {/* Referral Rewards Dashboard: Successful Invites & Pending Bonus Credits */}
+                    <div className="p-6 bg-gradient-to-br from-indigo-950 to-slate-900 text-white rounded-[32px] border border-indigo-900 shadow-xl space-y-4 text-left mb-6">
+                       <div className="flex justify-between items-center">
+                          <h4 className="text-xs font-black uppercase tracking-widest text-indigo-300">Referral Rewards Dashboard</h4>
+                          <span className="text-[8px] bg-indigo-500/30 text-indigo-200 px-2.5 py-1 rounded-full font-black uppercase tracking-wider">Community Engagement</span>
+                       </div>
+                       <div className="grid grid-cols-2 gap-4">
+                          <div className="p-4 bg-white/5 rounded-2xl border border-white/10 text-left">
+                             <div className="flex items-center space-x-2 text-indigo-300">
+                                <CheckCircle size={14} className="text-indigo-400" />
+                                <span className="text-[9px] font-black uppercase tracking-widest text-indigo-300">Successful Invites</span>
+                             </div>
+                             <p className="text-3xl font-black mt-1 text-white">{referrals.filter(r => r.status === 'Completed Task').length}</p>
+                             <p className="text-[8px] text-slate-400 font-semibold uppercase tracking-wider mt-1 block">Credits Earned: £{referrals.filter(r => r.status === 'Completed Task').length * 10}</p>
+                          </div>
+                          <div className="p-4 bg-white/5 rounded-2xl border border-white/10 text-left">
+                             <div className="flex items-center space-x-2 text-amber-400">
+                                <RotateCw size={14} className="text-amber-400 animate-spin animate-duration-3000" />
+                                <span className="text-[9px] font-black uppercase tracking-widest text-amber-300">Pending Bonus</span>
+                             </div>
+                             <p className="text-3xl font-black mt-1 text-white">£{referrals.filter(r => r.status !== 'Completed Task').length * 10}</p>
+                             <p className="text-[8px] text-slate-400 font-semibold uppercase tracking-wider mt-1 block">{referrals.filter(r => r.status !== 'Completed Task').length} pending friends</p>
+                          </div>
+                       </div>
+                       {/* Community engagement meter */}
+                       <div className="space-y-1 text-left">
+                          <div className="flex justify-between text-[8px] font-black uppercase tracking-widest text-slate-350">
+                             <span>Community Level 2 Milestone</span>
+                             <span>{referrals.filter(r => r.status === 'Completed Task').length}/5 Invites</span>
+                          </div>
+                          <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden border border-white/5">
+                             <div 
+                                className="bg-indigo-400 h-full rounded-full transition-all duration-500"
+                                style={{ width: `${Math.min(100, (referrals.filter(r => r.status === 'Completed Task').length / 5) * 100)}%` }}
+                             ></div>
+                          </div>
+                          <span className="text-[8px] text-indigo-200 font-bold block">
+                             Invite 5 friends to unlock the "Community Ambassador" elite badge and zero-fee service week!
+                          </span>
+                       </div>
+                    </div>
+
+                    {/* referral stats cards */}
                    <div className="grid grid-cols-2 gap-3.5">
                       <div className="p-5 bg-indigo-950 text-white rounded-[28px] shadow-sm relative overflow-hidden border border-indigo-900/45">
                          <div className="absolute -right-4 -bottom-4 text-indigo-850/40 w-16 h-16 pointer-events-none">
@@ -1401,7 +1651,84 @@ export function ProfileView() {
                 </div>
              )}
 
-             {view === 'impact' && (
+             {view === 'voice_logs' && (
+                 <div className="space-y-6 animate-fade-in text-left">
+                    <div className="p-6 bg-slate-900 text-white rounded-[32px] border border-slate-800 shadow-xl space-y-4 relative overflow-hidden">
+                       <div className="absolute -right-4 -bottom-4 text-slate-850/40 w-20 h-20 pointer-events-none">
+                          <Mic size={80} />
+                       </div>
+                       <p className="text-[9px] font-black uppercase tracking-widest text-indigo-300">Global Voice Assistant</p>
+                       <h4 className="text-2xl font-black">Voice Activity Logs</h4>
+                       <p className="text-[11px] text-slate-300 font-semibold leading-relaxed">
+                          Review and re-execute previous voice commands processed by the speech analyzer. Past commands are stored locally in your browser cache.
+                       </p>
+                    </div>
+
+                    {/* Activity List */}
+                    <div className="p-6 bg-white rounded-3xl border border-slate-100 shadow-sm space-y-4">
+                       <div className="flex justify-between items-center">
+                          <h4 className="font-black text-xs uppercase tracking-wider text-slate-800">Command Log History</h4>
+                          <button
+                             type="button"
+                             onClick={() => {
+                                haptics.heavy();
+                                localStorage.removeItem('global_voice_command_history');
+                                loadVoiceHistory();
+                             }}
+                             className="text-[9px] font-black uppercase text-rose-600 hover:text-rose-750 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-xl border-none cursor-pointer"
+                          >
+                             Clear History
+                          </button>
+                       </div>
+
+                       {voiceHistory.length === 0 ? (
+                          <div className="p-8 text-center text-slate-400 font-semibold text-xs border border-dashed border-slate-200 rounded-2xl">
+                             No voice command logs found. Speak a command using the Global Voice Trigger (e.g. "book a taxi") to seed activity logs!
+                          </div>
+                       ) : (
+                          <div className="space-y-3.5">
+                             {reexecutingCmd && (
+                                <div className="p-3 bg-emerald-50 border border-emerald-150 rounded-xl text-emerald-850 font-bold text-[10.5px] flex items-center gap-2 animate-pulse">
+                                   <RotateCw size={14} className="animate-spin text-emerald-500" />
+                                   <span>Re-executing: "{reexecutingCmd}"</span>
+                                </div>
+                             )}
+
+                             {voiceHistory.map((cmd, idx) => (
+                                <div key={idx} className="p-4 bg-slate-50 border border-slate-100 rounded-2xl flex justify-between items-center gap-3">
+                                   <div className="flex-1 min-w-0">
+                                      <p className="text-xs font-black text-slate-900 leading-snug break-words">"{cmd.text}"</p>
+                                      <p className="text-[9px] text-slate-400 font-bold uppercase mt-1 font-mono">
+                                         {new Date(cmd.timestamp).toLocaleString()}
+                                      </p>
+                                   </div>
+                                   <button
+                                      type="button"
+                                      onClick={() => {
+                                         haptics.success();
+                                         setReexecutingCmd(cmd.text);
+                                         setTimeout(() => {
+                                            if (typeof (window as any).__reexecuteVoiceCommand === 'function') {
+                                               (window as any).__reexecuteVoiceCommand(cmd.text);
+                                            } else {
+                                               console.error('__reexecuteVoiceCommand not registered on window.');
+                                            }
+                                            setReexecutingCmd(null);
+                                         }, 1200);
+                                      }}
+                                      className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[9px] font-black uppercase tracking-wider rounded-xl cursor-pointer border-none shadow-sm active:scale-95 transition-all shrink-0"
+                                   >
+                                      Re-run
+                                   </button>
+                                </div>
+                             ))}
+                          </div>
+                       )}
+                    </div>
+                 </div>
+              )}
+
+              {view === 'impact' && (
                 <div className="space-y-6">
                   {/* Impact Header Banner */}
                   <div className="p-6 bg-emerald-950 border border-emerald-900 rounded-[35px] text-white overflow-hidden relative">
@@ -1854,85 +2181,8 @@ export function ProfileView() {
               )}
 
              {view === 'verification' && (
-                <div className="space-y-8">
-                   <div className="text-center">
-                     <div className={`w-28 h-28 rounded-[40px] mx-auto flex items-center justify-center mb-8 shadow-2xl relative ${
-                       profile?.verificationStatus === 'verified' ? 'bg-emerald-500 text-white shadow-emerald-500/30' : 
-                       profile?.verificationStatus === 'pending' ? 'bg-amber-500 text-white shadow-amber-500/30' : 
-                       profile?.verificationStatus === 'rejected' ? 'bg-rose-500 text-white shadow-rose-500/30' :
-                       'bg-slate-200 text-white'
-                     }`}>
-                       <Shield size={42} />
-                       {profile?.verificationStatus === 'verified' && (
-                         <div className="absolute -bottom-2 -right-2 bg-white rounded-full p-2 shadow-xl border border-emerald-50">
-                            <Check size={24} className="text-emerald-500" />
-                         </div>
-                       )}
-                     </div>
-                     <h3 className="text-3xl font-black tracking-tighter mb-2">{
-                       profile?.verificationStatus === 'verified' ? 'Identity Verified' : 
-                       profile?.verificationStatus === 'pending' ? 'Reviewing' : 
-                       profile?.verificationStatus === 'rejected' ? 'ID Rejected' :
-                       'Get Verified'
-                     }</h3>
-                     <p className="text-xs text-slate-500 px-10 leading-relaxed font-bold italic opacity-60">
-                        {profile?.verificationStatus === 'verified' ? 'Full Worker Rights Unlocked' : 
-                         profile?.verificationStatus === 'pending' ? 'Awaiting Manual Security Check' :
-                         profile?.verificationStatus === 'rejected' ? 'Documents invalid or expired' :
-                         'Upload ID to unlock premium jobs'}
-                     </p>
-                   </div>
-                   
-                   <div className="p-5 bg-white rounded-[32px] border border-slate-100 shadow-sm text-center">
-                      <div className="w-full h-2 bg-slate-50 rounded-full mb-6 overflow-hidden">
-                         <div className={`h-full transition-all duration-1000 ${
-                           profile?.verificationStatus === 'verified' ? 'w-full bg-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.3)]' : 
-                           profile?.verificationStatus === 'pending' ? 'w-2/3 bg-amber-500 shadow-[0_0_20px_rgba(245,158,11,0.3)]' : 'w-1/3 bg-brand shadow-[0_0_20px_rgba(244,63,94,0.3)]'
-                         }`} />
-                      </div>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Profile Completion: {
-                        profile?.verificationStatus === 'verified' ? '100' : 
-                        profile?.verificationStatus === 'pending' ? '65' : '30'
-                      }%</p>
-                    </div>
-
-                   {profile?.verificationStatus !== 'verified' && profile?.verificationStatus !== 'pending' && (
-                       <div className="p-6 bg-slate-50 rounded-[40px] border-2 border-dashed border-slate-200 space-y-4">
-                          <div className="flex items-center space-x-4 mb-4">
-                             <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-400">
-                               <FileText size={20} />
-                             </div>
-                             <div className="text-left">
-                                <p className="font-bold text-xs">Identity Document</p>
-                                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Passport / ID Card / Utility</p>
-                             </div>
-                          </div>
-                          
-                          <label className="block w-full cursor-pointer group">
-                             <div className="w-full py-8 bg-white border-2 border-dashed border-slate-200 rounded-3xl flex flex-col items-center justify-center space-y-2 group-hover:border-brand transition-all">
-                                <Camera size={28} className="text-slate-300 group-hover:text-brand transition-colors mx-auto" />
-                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Capture or Upload Doc</span>
-                             </div>
-                             <input 
-                               type="file" 
-                               className="hidden" 
-                               accept="image/*,application/pdf"
-                               onChange={async (e) => {
-                                 if (e.target.files?.length && profile?.uid) {
-                                   await updateDoc(doc(db, 'users', profile.uid), {
-                                     verificationStatus: 'pending',
-                                     verificationStep: 'Awaiting Document Review',
-                                     documents: ['user_manual_doc.pdf'],
-                                     updatedAt: serverTimestamp()
-                                   });
-                                 }
-                               }}
-                             />
-                          </label>
-                       </div>
-                    )}
-                 </div>
-              )}
+                <VerificationStatus onBack={() => setView('main')} />
+             )}
 
               {view === 'appearance' && (
                  <div className="space-y-6 pb-12">
@@ -2858,6 +3108,27 @@ export function ProfileView() {
               {view === 'settings' && (
                  <div className="space-y-6 pb-12">
                     <SettingsEditor />
+
+                    {/* DATA PRIVACY & EXPORT ZONE */}
+                    <div className="p-6 bg-slate-50 dark:bg-slate-850 rounded-3xl border border-slate-150 dark:border-slate-800 shadow-sm space-y-4 text-left">
+                       <div className="flex items-center space-x-2">
+                          <Database className="text-indigo-600 dark:text-indigo-400" size={18} />
+                          <h4 className="text-xs font-black uppercase tracking-widest text-slate-800 dark:text-slate-100">Backup & Data Privacy</h4>
+                       </div>
+                       <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block leading-none">
+                          Export local transactions & historical metrics
+                       </p>
+                       <p className="text-[11px] text-slate-650 dark:text-slate-300 leading-relaxed font-semibold">
+                          Download a complete archive of your completed verified trades bookings and marketplace purchase history. The output is a standard offline JSON data file complying with local GDPR portability policies.
+                       </p>
+                       <button
+                         onClick={exportDataAsJSON}
+                         className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all text-center border-none shadow-md shadow-indigo-100 dark:shadow-none cursor-pointer flex items-center justify-center space-x-2"
+                       >
+                          <FileText size={14} />
+                          <span>Export History as JSON File</span>
+                       </button>
+                    </div>
 
                     {/* ACCOUNT DELETION ZONE */}
                     <div className="p-6 bg-red-50/50 rounded-3xl border border-red-100 shadow-sm space-y-4">

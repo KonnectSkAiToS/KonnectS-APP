@@ -200,7 +200,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Pre-populate with cached profile from localStorage immediately for offline speed / fallback
         const cachedProfile = localStorage.getItem(`konnects_profile_cache_${user.uid}`);
         if (cachedProfile) {
-          setProfile(JSON.parse(cachedProfile));
+          try {
+            setProfile(JSON.parse(cachedProfile));
+          } catch (err) {
+            console.warn('[AuthContext] Failed to parse cached profile:', err);
+          }
         } else {
           fetch('/api/offline/profile')
             .then(res => res.json())
@@ -229,7 +233,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           console.warn("Firestore snapshot failed (possibly offline). Using cached profile instead.", error);
           const cachedProfileBackup = localStorage.getItem(`konnects_profile_cache_${user.uid}`);
           if (cachedProfileBackup) {
-            setProfile(JSON.parse(cachedProfileBackup));
+            try {
+              setProfile(JSON.parse(cachedProfileBackup));
+            } catch (err) {
+              console.warn('[AuthContext] Failed to parse cached backup profile:', err);
+            }
           } else {
             // Service Worker cache network-fallback recovery
             fetch('/api/offline/profile')

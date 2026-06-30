@@ -103,9 +103,11 @@ export function GuidedTour({ userId, onClose }: GuidedTourProps) {
   };
 
   // Sync refs so modern listeners have uninterrupted state access
-  nextHandlerRef.current = handleNext;
-  backHandlerRef.current = handleBack;
-  skipHandlerRef.current = handleSkip;
+  useEffect(() => {
+    nextHandlerRef.current = handleNext;
+    backHandlerRef.current = handleBack;
+    skipHandlerRef.current = handleSkip;
+  });
 
   // Initialize SpeechRecognition verbal step progression:
   useEffect(() => {

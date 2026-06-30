@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -33,32 +33,7 @@ export function CommunityPulse() {
   const [newDateOrReplies, setNewDateOrReplies] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Load Feed
-  useEffect(() => {
-    const q = query(collection(db, 'community_pulse'), orderBy('createdAt', 'desc'));
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const items: PulseItem[] = [];
-      snapshot.forEach((doc) => {
-        items.push({ id: doc.id, ...doc.data() } as PulseItem);
-      });
-
-      if (items.length === 0) {
-        // Seed default items if collection is empty
-        seedDefaultItems();
-      } else {
-        setPulseItems(items);
-        setLoading(false);
-      }
-    }, (error) => {
-      console.error("Pulse feed stream error:", error);
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  const seedDefaultItems = async () => {
+  const seedDefaultItems = useCallback(async () => {
     const defaults: Omit<PulseItem, 'id'>[] = [
       {
         title: "Main Street Community Garden Cleanup",
@@ -115,7 +90,32 @@ export function CommunityPulse() {
     } catch (e) {
       console.error("Error seeding community pulse values:", e);
     }
-  };
+  }, []);
+
+  // Load Feed
+  useEffect(() => {
+    const q = query(collection(db, 'community_pulse'), orderBy('createdAt', 'desc'));
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const items: PulseItem[] = [];
+      snapshot.forEach((doc) => {
+        items.push({ id: doc.id, ...doc.data() } as PulseItem);
+      });
+
+      if (items.length === 0) {
+        // Seed default items if collection is empty
+        seedDefaultItems();
+      } else {
+        setPulseItems(items);
+        setLoading(false);
+      }
+    }, (error) => {
+      console.error("Pulse feed stream error:", error);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [seedDefaultItems]);
 
   const handleSupport = async (itemId: string) => {
     try {

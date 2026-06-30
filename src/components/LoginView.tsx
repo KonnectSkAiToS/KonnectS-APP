@@ -11,11 +11,11 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db, firebaseConfig } from '../lib/firebase';
 import { haptics } from '../utils/haptics';
 
-type AuthMode = 'login' | 'signup' | 'forgot' | 'forgot-success' | 'find-account' | 'results' | 'verify-account';
+type AuthMode = 'gateway' | 'login' | 'signup' | 'forgot' | 'forgot-success' | 'find-account' | 'results' | 'verify-account';
 
 export function LoginView() {
   const { signIn, simulateOAuthSignIn, emailSignIn, emailSignUp, resetPassword } = useAuth();
-  const [mode, setMode] = useState<AuthMode>('login');
+  const [mode, setMode] = useState<AuthMode>('gateway');
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,20 +63,25 @@ export function LoginView() {
       if (typeof window !== 'undefined' && navigator.credentials?.get) {
         const challenge = new Uint8Array(32);
         window.crypto.getRandomValues(challenge);
-        navigator.credentials.get({
+        
+        // Construct standard PublicKeyCredentialRequestOptions for secure biometric assertion
+        const options: CredentialRequestOptions = {
           publicKey: {
             challenge,
             rpId: window.location.hostname,
-            allowCredentials: [],
             userVerification: 'required',
-            timeout: 2000,
+            timeout: 60000,
           }
-        }).catch(err => {
-          console.warn("Handled WebAuthn credentials assert sandbox block, simulating secure enclave handshake:", err);
-        });
+        };
+
+        console.log("Requesting WebAuthn assertion signature...", options);
+        
+        // Trigger actual Web Authentication API
+        const credential = await navigator.credentials.get(options);
+        console.log("WebAuthn assertion success:", credential);
       }
-    } catch (e) {
-      console.warn("WebAuthn credentials trigger restricted:", e);
+    } catch (err: any) {
+      console.warn("WebAuthn assertion blocked or failed. Activating secure sandbox-safe biometric fallback:", err);
     }
 
     // Complete scan successfully
@@ -97,7 +102,7 @@ export function LoginView() {
           setError("Biometric keys authenticated! Since your session has expired, please log in once with your password to re-bind credentials.");
         }
       }, 1000);
-    }, 1800);
+    }, 1200);
   };
 
   const handleAuth = async (e: React.FormEvent) => {
@@ -249,6 +254,84 @@ export function LoginView() {
         </div>
 
         <AnimatePresence mode="wait">
+          {mode === 'gateway' && (
+            <motion.div
+              key="gateway"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="space-y-6 text-center"
+            >
+              <div className="mb-4">
+                <h1 className="text-2xl font-black tracking-tight mb-2">Welcome to KonnectS</h1>
+                <p className="text-xs text-slate-500 font-bold uppercase tracking-widest leading-relaxed">
+                  UK's All-In-One Super App
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptics.light();
+                    setMode('signup');
+                  }}
+                  className="w-full p-5 bg-gradient-to-br from-indigo-50 to-indigo-100 hover:from-indigo-100 hover:to-indigo-200 text-indigo-950 rounded-2xl border border-indigo-200/50 transition-all text-left flex items-center justify-between group shadow-sm active:scale-[0.98]"
+                >
+                  <div className="flex items-center space-x-4">
+                    <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center text-indigo-600 shadow-sm border border-indigo-100">
+                      <UserPlus size={22} className="group-hover:scale-110 transition-transform" />
+                    </div>
+                    <div>
+                      <p className="font-black text-xs uppercase tracking-wider">Create New Account</p>
+                      <p className="text-[10px] text-indigo-600/80 font-bold">Register and join the community</p>
+                    </div>
+                  </div>
+                  <span className="text-lg font-black text-indigo-600 group-hover:translate-x-1 transition-transform">→</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptics.light();
+                    setMode('login');
+                  }}
+                  className="w-full p-5 bg-gradient-to-br from-slate-50 to-slate-100 hover:from-slate-100 hover:to-slate-200 text-slate-900 rounded-2xl border border-slate-200/50 transition-all text-left flex items-center justify-between group shadow-sm active:scale-[0.98]"
+                >
+                  <div className="flex items-center space-x-4">
+                    <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center text-slate-700 shadow-sm border border-slate-150">
+                      <LogIn size={22} className="group-hover:scale-110 transition-transform" />
+                    </div>
+                    <div>
+                      <p className="font-black text-xs uppercase tracking-wider">Log In to Existing Account</p>
+                      <p className="text-[10px] text-slate-500 font-bold">Access with ID, Email, or Mobile</p>
+                    </div>
+                  </div>
+                  <span className="text-lg font-black text-slate-700 group-hover:translate-x-1 transition-transform">→</span>
+                </button>
+              </div>
+
+              <div className="relative py-2">
+                <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-100"></div></div>
+                <div className="relative flex justify-center text-[10px] uppercase tracking-widest"><span className="bg-white px-2 text-slate-400 font-bold">Quick Access</span></div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                {socialLogins.map((s, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={s.action}
+                    disabled={loading}
+                    className="flex items-center justify-center h-14 rounded-2xl border border-slate-100 bg-white hover:bg-slate-50 shadow-sm transition-all active:scale-90"
+                  >
+                    {s.lucide ? <s.lucide className={s.text} size={22} /> : <img src={s.icon!} className="w-5 h-5" alt={s.name} />}
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          )}
+
           {mode === 'login' && (
             <motion.form 
               key="login"
@@ -258,9 +341,14 @@ export function LoginView() {
               onSubmit={handleAuth}
               className="space-y-4"
             >
-              <div className="text-center mb-8 flex flex-col items-center">
-                <h1 className="text-2xl font-black tracking-tight mb-1">Welcome Back</h1>
-                <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mb-4">Connect to your world</p>
+              <div className="flex items-center space-x-4 mb-4">
+                <button type="button" onClick={() => setMode('gateway')} className="p-2 bg-slate-50 rounded-xl hover:bg-slate-100 transition-colors">
+                  <ArrowLeft size={18} />
+                </button>
+                <h1 className="text-xl font-black tracking-tight">Log In</h1>
+              </div>
+
+              <div className="text-center mb-6 flex flex-col items-center">
                 <button
                   type="button"
                   onClick={handleBiometricAuth}
@@ -273,15 +361,15 @@ export function LoginView() {
 
               <div className="space-y-3">
                 <div className="relative">
-                  <Mail size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <User size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
                     name="email"
-                    type="email"
+                    type="text"
                     required
-                    placeholder="Email or Username"
+                    placeholder="User ID, Email, or Mobile Number"
                     value={formData.email}
                     onChange={handleChange}
-                    className="w-full pl-12 pr-4 py-4 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-brand font-medium placeholder:text-slate-400 transition-all"
+                    className="w-full pl-12 pr-4 py-4 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-brand font-medium placeholder:text-slate-400 transition-all text-xs"
                   />
                 </div>
                 <div className="relative">
@@ -416,7 +504,7 @@ export function LoginView() {
               className="space-y-4"
             >
               <div className="flex items-center space-x-4 mb-4">
-                <button type="button" onClick={() => setMode('login')} className="p-2 bg-slate-50 rounded-xl">
+                <button type="button" onClick={() => setMode('gateway')} className="p-2 bg-slate-50 rounded-xl hover:bg-slate-100 transition-colors">
                   <ArrowLeft size={18} />
                 </button>
                 <h1 className="text-xl font-black tracking-tight">New Account</h1>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Brain, Sparkles, TrendingUp, RefreshCw, BadgePercent, Check, ShieldAlert, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis } from 'recharts';
@@ -62,17 +62,17 @@ export function ExpenseInsight({ history = [] }: ExpenseInsightProps) {
 
   const COLORS = ['#6366f1', '#f59e0b', '#10b981', '#a855f7'];
 
-  const runAnalysis = () => {
+  const runAnalysis = useCallback(() => {
     setIsAnalyzing(true);
     haptics.medium();
 
     setTimeout(() => {
       // Simulate/aggregate actual booking history costs
-      const homeCosts = history
+      const homeCosts = (history || [])
         .filter(b => b.serviceType?.toLowerCase().includes('clean') || b.serviceType?.toLowerCase().includes('electric') || b.serviceType?.toLowerCase().includes('plumb') || b.serviceType?.toLowerCase().includes('repair'))
         .reduce((sum, b) => sum + (b.price || 60), 0) + 195; // base simulation history
 
-      const transportCosts = history
+      const transportCosts = (history || [])
         .filter(b => b.serviceType?.toLowerCase().includes('ride') || b.serviceType?.toLowerCase().includes('carpool'))
         .reduce((sum, b) => sum + (b.price || 25), 0) + 42; // base simulation history
 
@@ -99,11 +99,17 @@ export function ExpenseInsight({ history = [] }: ExpenseInsightProps) {
       setIsAnalyzing(false);
       haptics.success();
     }, 1100);
-  };
+  }, [history]);
 
   useEffect(() => {
-    runAnalysis();
-  }, [history]);
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) runAnalysis();
+    });
+    return () => {
+      active = false;
+    };
+  }, [runAnalysis]);
 
   const toggleApplyAlternative = (id: string, savings: number) => {
     haptics.success();

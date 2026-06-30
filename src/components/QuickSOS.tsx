@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ShieldAlert, Phone, MessageSquare, Edit2, Play, AlertOctagon, X, Volume2, ShieldCheck, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { db } from '../lib/firebase';
@@ -11,14 +11,39 @@ interface QuickSOSProps {
 
 export function QuickSOS({ compact = false }: QuickSOSProps) {
   const { user, profile } = useAuth();
-  const [sosName, setSosName] = useState('');
-  const [sosPhone, setSosPhone] = useState('');
-  const [isConfigured, setIsConfigured] = useState(false);
+  const [sosName, setSosName] = useState(() => {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('konnects_sos_name') || '';
+    }
+    return '';
+  });
+  const [sosPhone, setSosPhone] = useState(() => {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('konnects_sos_phone') || '';
+    }
+    return '';
+  });
+  const [isConfigured, setIsConfigured] = useState(() => {
+    if (typeof localStorage !== 'undefined') {
+      return !!(localStorage.getItem('konnects_sos_name') && localStorage.getItem('konnects_sos_phone'));
+    }
+    return false;
+  });
   
   // Configuration UI State
   const [showConfigModal, setShowConfigModal] = useState(false);
-  const [editName, setEditName] = useState('');
-  const [editPhone, setEditPhone] = useState('');
+  const [editName, setEditName] = useState(() => {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('konnects_sos_name') || '';
+    }
+    return '';
+  });
+  const [editPhone, setEditPhone] = useState(() => {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('konnects_sos_phone') || '';
+    }
+    return '';
+  });
   const [configError, setConfigError] = useState('');
 
   // Active Emergency States
@@ -27,17 +52,17 @@ export function QuickSOS({ compact = false }: QuickSOSProps) {
   const [emergencyTriggered, setEmergencyTriggered] = useState(false);
   const [smsDispatched, setSmsDispatched] = useState(false);
 
-  useEffect(() => {
-    const savedName = localStorage.getItem('konnects_sos_name');
-    const savedPhone = localStorage.getItem('konnects_sos_phone');
-    if (savedName && savedPhone) {
-      setSosName(savedName);
-      setSosPhone(savedPhone);
-      setEditName(savedName);
-      setEditPhone(savedPhone);
-      setIsConfigured(true);
+  // Start Panic Button countdown sequence
+  const triggerPanic = useCallback(() => {
+    if (!isConfigured) {
+      setShowConfigModal(true);
+      return;
     }
-  }, []);
+    setShowPanicOverlay(true);
+    setCountdown(5);
+    setEmergencyTriggered(false);
+    setSmsDispatched(false);
+  }, [isConfigured]);
 
   useEffect(() => {
     const handleVoiceSOS = () => {
@@ -45,7 +70,7 @@ export function QuickSOS({ compact = false }: QuickSOSProps) {
     };
     window.addEventListener('voice-sos-trigger', handleVoiceSOS);
     return () => window.removeEventListener('voice-sos-trigger', handleVoiceSOS);
-  }, [isConfigured, sosName, sosPhone]);
+  }, [triggerPanic]);
 
   const handleSaveConfig = (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,28 +87,19 @@ export function QuickSOS({ compact = false }: QuickSOSProps) {
     setConfigError('');
   };
 
-  // Start Panic Button countdown sequence
-  const triggerPanic = () => {
-    if (!isConfigured) {
-      setShowConfigModal(true);
-      return;
-    }
-    setShowPanicOverlay(true);
-    setCountdown(5);
-    setEmergencyTriggered(false);
-    setSmsDispatched(false);
-  };
-
   // Countdown timer effect
   useEffect(() => {
     let timerID: any;
+    let active = true;
     if (showPanicOverlay && countdown > 0 && !emergencyTriggered) {
       timerID = setTimeout(() => {
         setCountdown(prev => prev - 1);
       }, 1000);
     } else if (showPanicOverlay && countdown === 0 && !emergencyTriggered) {
       // Fire Emergency sequence!
-      setEmergencyTriggered(true);
+      Promise.resolve().then(() => {
+        if (active) setEmergencyTriggered(true);
+      });
 
       // Perform real-time location sharing with Firebase Firestore
       const shareSosOnFirebase = async () => {
@@ -144,7 +160,10 @@ export function QuickSOS({ compact = false }: QuickSOSProps) {
         setSmsDispatched(true);
       }, 1500);
     }
-    return () => clearTimeout(timerID);
+    return () => {
+      active = false;
+      clearTimeout(timerID);
+    };
   }, [showPanicOverlay, countdown, emergencyTriggered, user, profile, sosName, sosPhone]);
 
   const cancelPanic = () => {

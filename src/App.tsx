@@ -18,11 +18,14 @@ import { GeminiAssistant } from './components/GeminiAssistant';
 import { ChatView } from './components/ChatView';
 import { GlobalVoiceCommand } from './components/GlobalVoiceCommand';
 import { DeveloperHUD } from './components/DeveloperHUD';
+import { ConflictResolutionModal } from './components/ConflictResolutionModal';
 import { motion, AnimatePresence } from 'framer-motion';
 import { startBookingNotificationListener, listenToRideLocalChanges, NotificationItem, startScheduledRideNotificationChecker, snoozeNotifications } from './services/notificationService';
-import { Bell, AlertCircle, Check } from 'lucide-react';
+import { Bell, AlertCircle, Check, Bug } from 'lucide-react';
 import { GuidedTour } from './components/GuidedTour';
 import { startRealtimeDbSync } from './services/dbSyncService';
+import { ReportIssueModal } from './components/ReportIssueModal';
+import { haptics } from './utils/haptics';
 
 type Tab = 'home' | 'marketplace' | 'services' | 'rides' | 'profile';
 
@@ -32,6 +35,11 @@ function AppContent() {
   const [chattingWith, setChattingWith] = useState<{ id: string; name: string } | null>(null);
   const [toastNotification, setToastNotification] = useState<NotificationItem | null>(null);
   const [showGuidedTour, setShowGuidedTour] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+
+  useEffect(() => {
+    (window as any).__activeTab = activeTab;
+  }, [activeTab]);
 
   // Sync and apply layout parameters
   useEffect(() => {
@@ -183,7 +191,7 @@ function AppContent() {
   const renderView = () => {
     // If worker mode is ON, show worker dashboard instead of home/services/rides
     if (profile?.isWorkerMode && (activeTab === 'home' || activeTab === 'services' || activeTab === 'rides')) {
-       return <WorkerView onChat={(id, name) => setChattingWith({ id, name })} />;
+       return <WorkerView onChat={(id, name) => setChattingWith({ id, name })} activeTab={activeTab} />;
     }
 
     switch (activeTab) {
@@ -215,6 +223,22 @@ function AppContent() {
       <GeminiAssistant />
       <GlobalVoiceCommand />
       <DeveloperHUD />
+      <ConflictResolutionModal />
+
+      {/* Floating Report Issue Trigger */}
+      <div className="fixed right-6 bottom-40 z-45">
+        <motion.button
+          whileHover={{ scale: 1.08 }}
+          whileTap={{ scale: 0.95 }}
+          onClick={() => { haptics.light(); setShowReportModal(true); }}
+          className="w-12 h-12 bg-rose-500 hover:bg-rose-600 text-white rounded-full flex items-center justify-center shadow-2xl border-none cursor-pointer transition-all shadow-rose-500/30"
+          title="Report an Issue"
+        >
+          <Bug size={20} />
+        </motion.button>
+      </div>
+
+      <ReportIssueModal isOpen={showReportModal} onClose={() => setShowReportModal(false)} activeTab={activeTab} />
 
       {/* Real-time Global Toast Alert Overlay */}
       <AnimatePresence>

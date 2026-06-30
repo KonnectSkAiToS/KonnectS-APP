@@ -51,6 +51,14 @@ export function CommunitySafety() {
   const [alerts, setAlerts] = useState<SafetyAlert[]>(SEEDED_ALERTS);
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
   const [broadcasting, setBroadcasting] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNow(Date.now());
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Form Fields
   const [title, setTitle] = useState('');
@@ -191,7 +199,7 @@ export function CommunitySafety() {
             const CatIcon = theme.icon;
             
             // Format time difference
-            const diffMin = Math.round((Date.now() - new Date(al.createdAt).getTime()) / 60000);
+            const diffMin = Math.round((now - new Date(al.createdAt).getTime()) / 60000);
             const relativeTimeStr = diffMin <= 0 ? 'Just now' : diffMin < 60 ? `${diffMin}m ago` : `${Math.floor(diffMin/60)}h ago`;
 
             return (
