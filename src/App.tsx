@@ -73,6 +73,9 @@ function AppContent() {
 
   useEffect(() => {
     (window as any).__activeTab = activeTab;
+    (window as any).__navigateTab = (tab: Tab) => {
+      setActiveTab(tab);
+    };
     (window as any).__setDefaultHomeTab = (tab: Tab) => {
       setActiveTab(tab);
     };
@@ -143,15 +146,22 @@ function AppContent() {
     document.documentElement.style.fontSize = size;
   }, [profile?.accessibilityFontScale]);
 
-  // Handle tour popup trigger for first login
+  // Global custom event listener to re-launch tour from Settings or Profile
   useEffect(() => {
-    if (user?.uid) {
-      const isCompleted = localStorage.getItem(`urbanNet_tour_completed_${user.uid}`) === 'true';
-      if (!isCompleted) {
-        // Delay slightly for smooth modal entrance trigger
-        const handle = setTimeout(() => setShowGuidedTour(true), 1500);
-        return () => clearTimeout(handle);
-      }
+    const handleLaunchTour = () => setShowGuidedTour(true);
+    window.addEventListener('launch-guided-tour', handleLaunchTour);
+    return () => window.removeEventListener('launch-guided-tour', handleLaunchTour);
+  }, []);
+
+  // Handle tour popup trigger for first-time logged in OR guest users
+  useEffect(() => {
+    const tourUserId = user?.uid || 'guest_user';
+    const isCompleted = localStorage.getItem(`urbanNet_tour_completed_${tourUserId}`) === 'true';
+    const forceAlways = localStorage.getItem('konnects_auto_tour_on_start') === 'true';
+    if (!isCompleted || forceAlways) {
+      // Delay slightly for smooth modal entrance trigger
+      const handle = setTimeout(() => setShowGuidedTour(true), 1200);
+      return () => clearTimeout(handle);
     }
   }, [user]);
 
@@ -397,9 +407,9 @@ function AppContent() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {showGuidedTour && user?.uid && (
+        {showGuidedTour && (
           <GuidedTour 
-            userId={user.uid} 
+            userId={user?.uid || 'guest_user'} 
             onClose={() => setShowGuidedTour(false)} 
           />
         )}
