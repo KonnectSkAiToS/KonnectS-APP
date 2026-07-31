@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { User, Settings, Shield, Award, CreditCard, Wrench, FileText, Share2, LogOut, Camera, ChevronRight, Copy, Check, MessageCircle, Mail, MapPin, MessageSquare, Heart, Trash2, ShoppingBag, ToggleLeft, ToggleRight, ArrowLeft, Leaf, RotateCw, X, ShieldCheck, CheckCircle, RefreshCw, Video, Activity, Wifi, Database, Cpu, HardDrive, Battery, Mic, Globe, Zap } from 'lucide-react';
+import { User, Settings, Shield, Award, CreditCard, Wrench, FileText, Share2, LogOut, Camera, ChevronRight, Copy, Check, MessageCircle, Mail, MapPin, MessageSquare, Heart, Trash2, ShoppingBag, ToggleLeft, ToggleRight, ArrowLeft, Leaf, RotateCw, X, ShieldCheck, CheckCircle, RefreshCw, Video, Activity, Wifi, Database, Cpu, HardDrive, Battery, Mic, Globe, Zap, Sparkles } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage, Language } from '../contexts/LanguageContext';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -899,6 +899,7 @@ Your transaction is secured with ISO-27001 standard.
     { icon: Activity, label: t('profile.title').includes('Profile') ? 'Financial Monthly Breakdown' : 'আর্থিক মাসিক বিবরণী', value: 'financial', color: 'bg-indigo-50 text-indigo-700' },
     { icon: Shield, label: t('profile.title').includes('Profile') ? 'Worker Verification' : 'কর্মী যাচাইকরণ', value: 'verification', color: 'bg-blue-50 text-blue-600' },
     { icon: Cpu, label: t('profile.title').includes('Profile') ? 'Systems, Sync & Diagnostics' : 'সিস্টেম ও সিঙ্ক তথ্য', value: 'systems_dashboard', color: 'bg-emerald-50 text-emerald-700' },
+    { icon: Sparkles, label: t('profile.title').includes('Profile') ? 'Step-by-Step App Tour' : 'অ্যাপ নির্দেশিকা ট্যুর', value: 'launch_tour', color: 'bg-indigo-50 text-indigo-600' },
     { icon: Settings, label: t('profile.title').includes('Profile') ? 'Appearance & Theme' : 'থিম সেটিংস', value: 'appearance', color: 'bg-violet-50 text-violet-600' },
     { icon: Settings, label: t('profile.title').includes('Profile') ? 'App Settings' : 'অ্যাপ সেটিংস', value: 'settings', color: 'bg-slate-50 text-slate-600' },
     { icon: Share2, label: t('profile.title').includes('Profile') ? 'Invite Friends' : 'বন্ধুদের আমন্ত্রণ জানান', value: 'invite', color: 'bg-emerald-50 text-emerald-600' },
@@ -1463,7 +1464,9 @@ Your transaction is secured with ISO-27001 standard.
                    key={i}
                    whileTap={{ scale: 0.98 }}
                    onClick={() => {
-                     if (item.value === 'feedback_trigger') {
+                     if (item.value === 'launch_tour') {
+                       window.dispatchEvent(new CustomEvent('launch-guided-tour'));
+                     } else if (item.value === 'feedback_trigger') {
                        setShowFeedbackModal(true);
                      } else {
                        setView(item.value as SubView);
