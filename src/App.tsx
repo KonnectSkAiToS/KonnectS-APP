@@ -36,7 +36,27 @@ type Tab = 'home' | 'marketplace' | 'services' | 'rides' | 'profile' | 'workspac
 
 function AppContent() {
   const { user, profile, loading } = useAuth();
-  const [activeTab, setActiveTab] = useState<Tab>('home');
+  const [activeTab, setActiveTabState] = useState<Tab>(() => {
+    try {
+      const saved = localStorage.getItem('user_default_home_tab') || localStorage.getItem('urbanNet_default_tab');
+      if (saved && ['home', 'marketplace', 'services', 'rides', 'profile', 'workspace'].includes(saved)) {
+        return saved as Tab;
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+    return 'home';
+  });
+
+  const setActiveTab = (tab: Tab) => {
+    setActiveTabState(tab);
+    try {
+      localStorage.setItem('user_default_home_tab', tab);
+    } catch (e) {
+      console.warn(e);
+    }
+  };
+
   const [chattingWith, setChattingWith] = useState<{ id: string; name: string } | null>(null);
   const [toastNotification, setToastNotification] = useState<NotificationItem | null>(null);
   const [showGuidedTour, setShowGuidedTour] = useState(false);
@@ -53,6 +73,9 @@ function AppContent() {
 
   useEffect(() => {
     (window as any).__activeTab = activeTab;
+    (window as any).__setDefaultHomeTab = (tab: Tab) => {
+      setActiveTab(tab);
+    };
   }, [activeTab]);
 
   // Sync and apply layout parameters

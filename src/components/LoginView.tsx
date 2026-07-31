@@ -15,7 +15,7 @@ type AuthMode = 'gateway' | 'login' | 'signup' | 'forgot' | 'forgot-success' | '
 
 export function LoginView() {
   const { signIn, simulateOAuthSignIn, emailSignIn, emailSignUp, resetPassword } = useAuth();
-  const [mode, setMode] = useState<AuthMode>('login');
+  const [mode, setMode] = useState<AuthMode>('gateway');
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

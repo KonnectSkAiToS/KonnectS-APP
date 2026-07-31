@@ -324,6 +324,9 @@ export function SettingsEditor() {
   ]);
 
   // 8. Appearance Preference
+  const [defaultHomeTab, setDefaultHomeTab] = useState<string>(() => {
+    return localStorage.getItem('user_default_home_tab') || 'home';
+  });
   const [appearanceMode, setAppearanceMode] = useState<'light' | 'dark' | 'system' | 'eye-protection' | 'high-contrast'>(() => {
     return (localStorage.getItem('appearance_theme') as any) || 'light';
   });
@@ -1140,6 +1143,41 @@ export function SettingsEditor() {
                     }`}
                   >
                     {themOpt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+              <span className="text-sm font-black block text-slate-900 dark:text-white">Default Landing / Home Page</span>
+              <span className="text-[10px] text-slate-405 block font-bold uppercase tracking-wider mb-2.5 mt-0.5">Select which view screen opens by default when starting the app</span>
+              <div className="grid grid-cols-3 gap-2 bg-slate-50 p-1.5 rounded-2xl dark:bg-slate-900">
+                {[
+                  { label: 'Home View', value: 'home' },
+                  { label: 'Marketplace', value: 'marketplace' },
+                  { label: 'Services', value: 'services' },
+                  { label: 'Rides & Cabs', value: 'rides' },
+                  { label: 'Profile', value: 'profile' },
+                  { label: 'Workspace', value: 'workspace' }
+                ].map((homeOpt) => (
+                  <button
+                    key={homeOpt.value}
+                    onClick={() => {
+                      haptics.success();
+                      setDefaultHomeTab(homeOpt.value);
+                      localStorage.setItem('user_default_home_tab', homeOpt.value);
+                      if ((window as any).__setDefaultHomeTab) {
+                        (window as any).__setDefaultHomeTab(homeOpt.value);
+                      }
+                      triggerSaveNotification(`Default Home Page set to ${homeOpt.label}.`);
+                    }}
+                    className={`py-2 px-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                      defaultHomeTab === homeOpt.value
+                        ? 'bg-slate-950 text-white dark:bg-indigo-650 ring-2 ring-indigo-500/30'
+                        : 'text-slate-600 hover:bg-slate-100 dark:text-slate-350 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    {homeOpt.label}
                   </button>
                 ))}
               </div>
