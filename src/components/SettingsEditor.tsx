@@ -38,6 +38,7 @@ export function SettingsEditor() {
   const [batteryCharging, setBatteryCharging] = useState<boolean>(false);
   const [batterySaverActive, setBatterySaverActive] = useState<boolean>(() => localStorage.getItem('konnects_battery_saver_active') === 'true');
   const [autoSaver, setAutoSaver] = useState<boolean>(true);
+  const [autoTourOnStart, setAutoTourOnStart] = useState<boolean>(() => localStorage.getItem('konnects_auto_tour_on_start') === 'true');
 
   const [fbPing, setFbPing] = useState<number>(14);
   const [sbPing, setSbPing] = useState<number | null>(null);
@@ -1746,7 +1747,91 @@ export function SettingsEditor() {
         {/* 7. FAQS, HELP CENTER & SUPPORT FORM */}
         {activeTab === 'support' && (
           <div className="space-y-5 animate-fade-in text-slate-900 dark:text-white select-none">
-            <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">Help Centre & Contact Support</h4>
+            <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">Help Centre & App Guided Tour</h4>
+
+            {/* APPS STEP-BY-STEP GUIDED TOUR CARD */}
+            <div className="p-5 bg-gradient-to-br from-indigo-900 via-indigo-950 to-slate-950 text-white rounded-[28px] shadow-xl border border-indigo-700/40 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2.5 bg-indigo-500/20 rounded-2xl border border-indigo-400/30 text-indigo-300">
+                    <Sparkles size={20} className="animate-pulse text-amber-300" />
+                  </div>
+                  <div>
+                    <h5 className="text-sm font-black tracking-tight text-white">Step-by-Step App Tour & Explanation</h5>
+                    <p className="text-[10px] text-indigo-200/80 font-medium">Interactive guide explaining all features for guest users & members</p>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[9px] font-black uppercase tracking-wider rounded-full">
+                  Interactive
+                </span>
+              </div>
+
+              <p className="text-xs text-indigo-100/90 leading-relaxed">
+                Walk through the <strong>Home Dashboard</strong>, hire verified <strong>Neighborhood Services</strong>, swap items on the <strong>Marketplace</strong>, dispatch <strong>Rides</strong>, broadcast <strong>Emergency SOS Alerts</strong>, and manage <strong>Worker Mode</strong>.
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptics.success();
+                    window.dispatchEvent(new CustomEvent('launch-guided-tour'));
+                    triggerSaveNotification('Launching Step-by-Step App Tour...');
+                  }}
+                  className="py-3 px-4 bg-white hover:bg-slate-100 text-slate-950 font-black text-xs uppercase tracking-wider rounded-2xl border-none cursor-pointer flex items-center justify-center gap-2 shadow-lg transition-all"
+                >
+                  <Sparkles size={14} className="text-indigo-600" />
+                  <span>🚀 Launch Tour Now</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptics.light();
+                    const userId = profile?.uid || 'guest_user';
+                    localStorage.removeItem(`urbanNet_tour_completed_${userId}`);
+                    localStorage.removeItem('urbanNet_tour_completed_guest_user');
+                    window.dispatchEvent(new CustomEvent('launch-guided-tour'));
+                    triggerSaveNotification('Tour progress reset! Re-playing step-by-step guide...');
+                  }}
+                  className="py-3 px-4 bg-indigo-800/60 hover:bg-indigo-800 text-indigo-100 font-black text-xs uppercase tracking-wider rounded-2xl border border-indigo-500/30 cursor-pointer flex items-center justify-center gap-2 transition-all"
+                >
+                  <RefreshCw size={13} />
+                  <span>Reset & Re-play Tour</span>
+                </button>
+              </div>
+
+              {/* Auto Start Setting Toggle */}
+              <div className="pt-3 border-t border-indigo-800/50 flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold text-white block">Auto-launch tour on app startup</span>
+                  <span className="text-[9.5px] text-indigo-300 block">Always show guided tour automatically whenever starting the app</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextVal = !autoTourOnStart;
+                    setAutoTourOnStart(nextVal);
+                    localStorage.setItem('konnects_auto_tour_on_start', nextVal ? 'true' : 'false');
+                    haptics.light();
+                    triggerSaveNotification(nextVal ? 'Auto-start tour enabled on launch.' : 'Auto-start tour disabled.');
+                  }}
+                  className="bg-transparent border-none cursor-pointer"
+                >
+                  {autoTourOnStart ? (
+                    <ToggleRight size={36} className="text-emerald-400 fill-emerald-400/20" />
+                  ) : (
+                    <ToggleLeft size={36} className="text-indigo-400/50" />
+                  )}
+                </button>
+              </div>
+
+              {/* Voice Navigation Commands Summary */}
+              <div className="p-3 bg-indigo-950/80 rounded-xl border border-indigo-800/40 text-[10.5px] text-indigo-200 space-y-1">
+                <span className="text-[9px] font-black uppercase tracking-widest text-indigo-400 block font-mono">🎤 Voice Commands During Tour</span>
+                <p className="leading-tight text-[10px]">Tap the <strong>Voice button</strong> on the tour card and speak: <strong>"Next"</strong> to proceed, <strong>"Back"</strong> to return, or <strong>"Skip"</strong> to finish.</p>
+              </div>
+            </div>
 
             {/* Search FAQs */}
             <div className="relative">

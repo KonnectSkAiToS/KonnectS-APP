@@ -21,51 +21,59 @@ export function GuidedTour({ userId, onClose }: GuidedTourProps) {
   const TOUR_STEPS = [
     {
       title: 'Welcome to KonnectS!',
-      description: 'Your state-of-the-art regional web network. We connect professional skills, local transport, community boards, and a green swap marketplace under a single unified dashboard!',
+      description: 'Your state-of-the-art UK Super App, fully optimized for both guest users and registered members! We connect local pro services, transport dispatches, community boards, and a green swap marketplace under one unified dashboard.',
       icon: Sparkles,
-      iconColor: 'text-brand',
+      iconColor: 'text-[#1e1b4b] dark:text-indigo-400',
       tab: 'home',
-      tip: 'Get started by exploring real-time services and community climate offset goals right at the center!'
+      tip: 'As a guest user or member, you can explore all features, search local providers, and test dispatches freely!'
     },
     {
-      title: '🏠 Home Dashboard',
-      description: 'Your daily center for operations. Monitor Carbon Offsetting scores, trigger high-priority Quick SOS support, or dispatch commands instantly using our Global Voice Assistant.',
+      title: '🏠 Home Dashboard & Live Radar',
+      description: 'Your central hub for operations. Track live carbon offsets, check London traffic & weather radar, use our Global AI Voice Assistant, or trigger high-priority Quick SOS emergency support.',
       icon: Home,
       iconColor: 'text-indigo-600',
       tab: 'home',
-      tip: 'Our London Traffic & Dispatch radar is displayed live at the top of the map layer.'
-    },
-    {
-      title: '🛍️ Circular Swap Marketplace',
-      description: 'Support local matches and green swaps. Here, you can sell tradecrafts, or donate items for FREE. If the recipient lives near your home, payments are completely waived except for a £1 app token!',
-      icon: ShoppingBag,
-      iconColor: 'text-emerald-600',
-      tab: 'marketplace',
-      tip: 'Workers verified by our compliance team earn badge credentials to gain client authority.'
+      tip: 'Tap the Voice Mic button at any time to speak natural commands like "Book electrician" or "Show taxi"!'
     },
     {
       title: '💼 Neighborhood Pro Services',
-      description: 'Hire vetted professionals instantly. Whether you need an electrician, a master plumber, cleaners, or security guards, browse local workers verified with official DBS records.',
+      description: 'Hire vetted local professionals instantly. Search DBS-checked electricians, plumbers, house cleaners, tutors, and security guards. Chat in real-time to negotiate pricing before booking.',
       icon: Shield,
       iconColor: 'text-blue-600',
       tab: 'services',
-      tip: 'You can chat and safely negotiate pricing in real-time before booking services.'
+      tip: 'Look for the blue DBS Verified badge on worker profiles for verified background compliance and safety.'
     },
     {
-      title: '🚕 Transport & Rides',
-      description: 'Request on-demand drivers or schedule regular commutes 15 minutes before departure. Keep track of visual carpool routes with our advanced, accessible multi-layer map failed-safes.',
+      title: '🛍️ Circular Swap Marketplace',
+      description: 'Buy, sell, or swap pre-loved items locally. Give away items for FREE or trade goods. Near-home local collection orders pay £0 product cost plus a tiny £1 app token!',
+      icon: ShoppingBag,
+      iconColor: 'text-emerald-600',
+      tab: 'marketplace',
+      tip: 'Filter by "Free Item Giveaways" to find neighbors offering furniture, electronics, and books for free!'
+    },
+    {
+      title: '🚕 Transport & Scheduled Rides',
+      description: 'Request instant drivers or schedule regular commutes 15 minutes before departure. View live carpool route maps with accessibility support and driver arrival alerts.',
       icon: Car,
       iconColor: 'text-amber-500',
       tab: 'rides',
-      tip: 'We will send you a prompt reminder exactly 15 minutes before your scheduled pickup!'
+      tip: 'Schedule a commute in advance and we will send a notification alert 15 minutes prior to departure!'
     },
     {
-      title: '👤 Profile & Worker Mode',
-      description: 'Switch between Customer and Worker modes seamlessly! Track your accumulated rewards points, calibrate High-Contrast Accessibility, or toggles Dark Mode settings.',
+      title: '🚨 Community Safety & Bulletin Board',
+      description: 'Stay connected with your neighborhood. Broadcast emergency safety alerts, report road hazards, post volunteer requests, or join local neighborhood discussion boards.',
+      icon: Sparkles,
+      iconColor: 'text-rose-500',
+      tab: 'community',
+      tip: 'Community members can share real-time GPS alert pins for road closures, weather warnings, or safety updates.'
+    },
+    {
+      title: '👤 Profile, Worker Mode & Settings',
+      description: 'Switch between Customer and Worker/Provider modes! Manage rewards points, customize High-Contrast Accessibility, toggle Dark Mode, and re-launch this Guided Tour anytime in Settings!',
       icon: User,
       iconColor: 'text-violet-600',
       tab: 'profile',
-      tip: 'In Worker mode, you can upload certifications, trade skills and live camera verification photos to earn a verified status badge!'
+      tip: 'Want to replay this step-by-step guide anytime? Go to Profile -> Settings -> Support -> "Launch Guided Tour"!'
     }
   ];
 

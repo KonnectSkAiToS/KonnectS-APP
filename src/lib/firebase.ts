@@ -5,19 +5,24 @@
 
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { getFirestore, setLogLevel } from 'firebase/firestore';
+import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-
-// Quiet unnecessary console warnings for unprovisioned default database
-try {
-  setLogLevel('error');
-} catch (e) {}
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 export { firebaseConfig };
+
+// Connection test helper
+async function testConnection() {
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+  } catch {
+    // Operating with standard local persistence or offline mode
+  }
+}
+testConnection().catch(() => {});
 
 // Error handling as required by instructions
 export enum OperationType {
