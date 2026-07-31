@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Briefcase, Zap, Shield, Star, Clock, Check, MessageSquare, MapPin, X, 
   DollarSign, Calendar, Navigation, Wrench, Search, Heart, Laptop, BookOpen, 
@@ -228,12 +228,17 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
   const [isListeningVoice, setIsListeningVoice] = useState(false);
   const [voiceToast, setVoiceToast] = useState<string | null>(null);
 
+  const voiceTimerRef = useRef<any>(null);
+
   const toggleSpeechSearch = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
       alert('Speech Recognition (Web Speech API) is not supported in this browser. Please try Chrome or Safari.');
       return;
     }
+
+    if (voiceTimerRef.current) clearTimeout(voiceTimerRef.current);
+
     if (isListeningVoice) {
       setIsListeningVoice(false);
       return;
@@ -248,19 +253,41 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
       setIsListeningVoice(true);
       setVoiceToast("Listening for service names...");
       haptics.light();
+
+      // 30-second silence timeout
+      voiceTimerRef.current = setTimeout(() => {
+        try {
+          rec.stop();
+        } catch (e) {}
+        setIsListeningVoice(false);
+        setVoiceToast("Microphone turned off (30s timeout)");
+        setTimeout(() => setVoiceToast(null), 2500);
+      }, 30000);
     };
 
     rec.onerror = () => {
+      if (voiceTimerRef.current) clearTimeout(voiceTimerRef.current);
       setIsListeningVoice(false);
       setVoiceToast("Did not understand clearly. Try again.");
       setTimeout(() => setVoiceToast(null), 2500);
     };
 
+    rec.onspeechend = () => {
+      if (voiceTimerRef.current) clearTimeout(voiceTimerRef.current);
+      try {
+        rec.stop();
+      } catch (e) {}
+      setIsListeningVoice(false);
+    };
+
     rec.onend = () => {
+      if (voiceTimerRef.current) clearTimeout(voiceTimerRef.current);
       setIsListeningVoice(false);
     };
 
     rec.onresult = (event: any) => {
+      if (voiceTimerRef.current) clearTimeout(voiceTimerRef.current);
+      setIsListeningVoice(false);
       const text = event.results[0][0].transcript;
       setSearchQuery(text);
       setVoiceToast(`Searching: "${text}"`);
@@ -405,6 +432,8 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
   const [voiceError, setVoiceError] = useState('');
   const [manualVoiceCommandTxt, setManualVoiceCommandTxt] = useState('');
 
+  const bookingVoiceTimerRef = useRef<any>(null);
+
   const startVoiceBooking = () => {
     const SpeechComp = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechComp) {
@@ -412,6 +441,8 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
       setIsListening(true);
       return;
     }
+
+    if (bookingVoiceTimerRef.current) clearTimeout(bookingVoiceTimerRef.current);
 
     try {
       setVoiceError('');
@@ -424,23 +455,46 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
       recognition.continuous = false;
       recognition.interimResults = false;
 
+      // 30s silence timeout
+      bookingVoiceTimerRef.current = setTimeout(() => {
+        try {
+          recognition.stop();
+        } catch (x) {}
+        setIsListening(false);
+        setVoiceError("Voice recording ended due to 30s of silence.");
+      }, 30000);
+
       recognition.onresult = (event: any) => {
+        if (bookingVoiceTimerRef.current) clearTimeout(bookingVoiceTimerRef.current);
+        setIsListening(false);
         const resultText = event.results[0][0].transcript;
         setTranscript(resultText);
         parseVoiceCommand(resultText);
       };
 
+      recognition.onspeechend = () => {
+        if (bookingVoiceTimerRef.current) clearTimeout(bookingVoiceTimerRef.current);
+        try {
+          recognition.stop();
+        } catch (x) {}
+        setIsListening(false);
+      };
+
       recognition.onerror = (event: any) => {
+        if (bookingVoiceTimerRef.current) clearTimeout(bookingVoiceTimerRef.current);
+        setIsListening(false);
         console.error("Speech recognition error:", event.error);
         setVoiceError(`Voice error: ${event.error || 'Blocked'}. Please type below!`);
       };
 
       recognition.onend = () => {
+        if (bookingVoiceTimerRef.current) clearTimeout(bookingVoiceTimerRef.current);
         setIsListening(false);
       };
 
       recognition.start();
     } catch (err) {
+      if (bookingVoiceTimerRef.current) clearTimeout(bookingVoiceTimerRef.current);
       console.error(err);
       setVoiceError("Microphone setup failed. Please try typing below instead!");
     }

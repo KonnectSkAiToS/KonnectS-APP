@@ -1918,7 +1918,7 @@ Your transaction is secured with ISO-27001 standard.
                       <h4 className="font-extrabold text-[11px] uppercase tracking-wider text-slate-800">CO2 Emissions Saved (kg)</h4>
                     </div>
                     <div className="h-44 w-full text-[10px] font-mono font-bold">
-                      <ResponsiveContainer width="100%" height="100%">
+                      <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
                         <AreaChart
                           data={[
                             { month: 'Jan', co2: 12 },
@@ -1958,7 +1958,7 @@ Your transaction is secured with ISO-27001 standard.
                     </div>
                     <p className="text-[10px] text-slate-400 font-bold px-1 pb-1">Combined view of volunteer contribution hours and completed neighborhood jobs.</p>
                     <div className="h-44 w-full text-[10px] font-mono font-bold">
-                      <ResponsiveContainer width="100%" height="100%">
+                      <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
                         <BarChart
                           data={[
                             { month: 'Jan', hours: 15, jobs: 2 },
@@ -2091,7 +2091,7 @@ Your transaction is secured with ISO-27001 standard.
                       </div>
                       
                       <div className="h-56 w-full text-[10px] font-mono font-bold">
-                         <ResponsiveContainer width="100%" height="100%">
+                         <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
                             <BarChart
                                data={[
                                   { month: 'Jan', Services: 120, Marketplace: 45, Rides: 30 },
@@ -3265,7 +3265,7 @@ Your transaction is secured with ISO-27001 standard.
 
                        {/* Recharts AreaChart visualizer */}
                        <div className="w-full h-44">
-                          <ResponsiveContainer width="100%" height="100%">
+                          <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
                              <AreaChart
                                 data={[
                                    { name: 'Wk 1', rides: 2, marketplace: 4, services: 1 },

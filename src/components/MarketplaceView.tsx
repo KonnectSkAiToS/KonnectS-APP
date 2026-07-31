@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ShoppingBag, Search, Filter, Plus, Tag, MapPin, Star, Clock, ChevronRight, X, DollarSign, Package, Image as ImageIcon, Navigation, User, Heart, ChevronLeft, ShoppingCart, ShieldCheck, ArrowLeft, Sparkles, Trash, Mic, ChevronDown, Award, Camera } from 'lucide-react';
 import { QRScannerModal } from './QRScannerModal';
 import { FeatureSpotlight } from './FeatureSpotlight';
@@ -139,12 +139,17 @@ export function MarketplaceView() {
   const [voiceToast, setVoiceToast] = useState<string | null>(null);
   const [reviewingItem, setReviewingItem] = useState<any | null>(null);
 
+  const voiceTimerRef = useRef<any>(null);
+
   const toggleSpeechSearch = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
       alert('Speech Recognition (Web Speech API) is not supported in this browser. Please try Chrome or Safari.');
       return;
     }
+
+    if (voiceTimerRef.current) clearTimeout(voiceTimerRef.current);
+
     if (isListeningVoice) {
       setIsListeningVoice(false);
       return;
@@ -159,19 +164,41 @@ export function MarketplaceView() {
       setIsListeningVoice(true);
       setVoiceToast("Listening hands-free...");
       haptics.light();
+
+      // 30-second silence timeout
+      voiceTimerRef.current = setTimeout(() => {
+        try {
+          rec.stop();
+        } catch (e) {}
+        setIsListeningVoice(false);
+        setVoiceToast("Microphone turned off (30s timeout)");
+        setTimeout(() => setVoiceToast(null), 2500);
+      }, 30000);
     };
 
     rec.onerror = () => {
+      if (voiceTimerRef.current) clearTimeout(voiceTimerRef.current);
       setIsListeningVoice(false);
       setVoiceToast("Did not catch that. Try again.");
       setTimeout(() => setVoiceToast(null), 2500);
     };
 
+    rec.onspeechend = () => {
+      if (voiceTimerRef.current) clearTimeout(voiceTimerRef.current);
+      try {
+        rec.stop();
+      } catch (e) {}
+      setIsListeningVoice(false);
+    };
+
     rec.onend = () => {
+      if (voiceTimerRef.current) clearTimeout(voiceTimerRef.current);
       setIsListeningVoice(false);
     };
 
     rec.onresult = (event: any) => {
+      if (voiceTimerRef.current) clearTimeout(voiceTimerRef.current);
+      setIsListeningVoice(false);
       const text = event.results[0][0].transcript;
       setSearchTerm(text);
       setVoiceToast(`Searching: "${text}"`);

@@ -683,7 +683,7 @@ export function MarketplaceItemCard({
             </span>
           </div>
           <div className="h-10 w-full mt-1">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
               <LineChart data={fluctuations}>
                 <Tooltip
                   content={({ active, payload }) => {

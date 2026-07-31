@@ -21,6 +21,7 @@ export function GlobalVoiceCommand() {
 
   const longPressTimerRef = useRef<any>(null);
   const isLongPressActiveRef = useRef(false);
+  const inactivityTimerRef = useRef<any>(null);
 
   const startLongPress = (e: any) => {
     isLongPressActiveRef.current = false;
@@ -258,10 +259,21 @@ export function GlobalVoiceCommand() {
       setIsListening(true);
       setTranscript('Listening for commands...');
       setRecognizedAction(null);
+
+      // Start 30-second silence / inactivity timeout
+      if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = setTimeout(() => {
+        try {
+          rec.stop();
+        } catch (x) {}
+        setIsListening(false);
+        setTranscript('Microphone turned off (no speech detected for 30s).');
+      }, 30000);
     };
 
     rec.onerror = (e: any) => {
       console.error('Speech recognition error:', e.error);
+      if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
       setIsListening(false);
       if (e.error === 'not-allowed') {
         setTranscript('Microphone access denied. Enable permissions in settings.');
@@ -270,11 +282,22 @@ export function GlobalVoiceCommand() {
       }
     };
 
+    rec.onspeechend = () => {
+      if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+      try {
+        rec.stop();
+      } catch (x) {}
+      setIsListening(false);
+    };
+
     rec.onend = () => {
+      if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
       setIsListening(false);
     };
 
     rec.onresult = (event: any) => {
+      if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+      setIsListening(false);
       const resultText = event.results[0][0].transcript;
       setTranscript(resultText);
 
@@ -338,10 +361,18 @@ export function GlobalVoiceCommand() {
       alert('Web Speech Recognition API is unsupported on this browser.');
       return;
     }
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current);
+    }
     if (isListening) {
-      recognition?.stop();
+      try {
+        recognition?.stop();
+      } catch (x) {}
+      setIsListening(false);
     } else {
-      recognition?.start();
+      try {
+        recognition?.start();
+      } catch (x) {}
     }
   };
 

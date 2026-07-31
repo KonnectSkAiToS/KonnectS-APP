@@ -109,66 +109,87 @@ export function GuidedTour({ userId, onClose }: GuidedTourProps) {
     skipHandlerRef.current = handleSkip;
   });
 
-  // Initialize SpeechRecognition verbal step progression:
-  useEffect(() => {
+  const inactivityTimerRef = useRef<any>(null);
+  const recognitionRef = useRef<any>(null);
+
+  const toggleVoiceCommand = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      console.warn('SpeechRecognition not supported in GuidedTour');
+      alert('Speech Recognition is not supported in this browser.');
       return;
     }
 
-    const rec = new SpeechRecognition();
-    rec.continuous = true;
-    rec.interimResults = false;
-    rec.lang = 'en-GB';
+    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
 
-    rec.onstart = () => {
-      setIsListening(true);
-    };
-
-    rec.onresult = (event: any) => {
-      const last = event.results.length - 1;
-      const cmdText = event.results[last][0].transcript.trim().toLowerCase();
-      console.log('GuidedTour Voice command received:', cmdText);
-      setLastSpokenCommand(cmdText);
-
-      // Programmatic action keywords
-      if (cmdText.includes('next') || cmdText.includes('continue') || cmdText.includes('forward') || cmdText.includes('yes') || cmdText.includes('screen') || cmdText.includes('proceed')) {
-        nextHandlerRef.current();
-      } else if (cmdText.includes('back') || cmdText.includes('previous') || cmdText.includes('go back') || cmdText.includes('behind')) {
-        backHandlerRef.current();
-      } else if (cmdText.includes('skip') || cmdText.includes('close') || cmdText.includes('terminate') || cmdText.includes('finish') || cmdText.includes('exit') || cmdText.includes('stop')) {
-        skipHandlerRef.current();
-      }
-    };
-
-    rec.onerror = (err: any) => {
-      console.warn('Speech error in GuidedTour:', err);
-    };
-
-    rec.onend = () => {
-      // Automatically keep listening
+    if (isListening) {
       try {
-        rec.start();
-      } catch (x) {
-        setIsListening(false);
-      }
-    };
-
-    try {
-      rec.start();
-    } catch (e) {
-      console.error(e);
+        recognitionRef.current?.stop();
+      } catch (x) {}
+      setIsListening(false);
+      return;
     }
 
-    return () => {
-      try {
-        rec.stop();
-      } catch (ex) {
-        console.error(ex);
-      }
-    };
-  }, []);
+    try {
+      const rec = new SpeechRecognition();
+      rec.continuous = false;
+      rec.interimResults = false;
+      rec.lang = 'en-GB';
+
+      rec.onstart = () => {
+        setIsListening(true);
+        haptics.light();
+        // 30-second silence timeout
+        inactivityTimerRef.current = setTimeout(() => {
+          try {
+            rec.stop();
+          } catch (e) {}
+          setIsListening(false);
+        }, 30000);
+      };
+
+      rec.onresult = (event: any) => {
+        if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+        setIsListening(false);
+        const last = event.results.length - 1;
+        const cmdText = event.results[last][0].transcript.trim().toLowerCase();
+        console.log('GuidedTour Voice command received:', cmdText);
+        setLastSpokenCommand(cmdText);
+
+        if (cmdText.includes('next') || cmdText.includes('continue') || cmdText.includes('forward') || cmdText.includes('yes') || cmdText.includes('screen') || cmdText.includes('proceed')) {
+          nextHandlerRef.current();
+        } else if (cmdText.includes('back') || cmdText.includes('previous') || cmdText.includes('go back') || cmdText.includes('behind')) {
+          backHandlerRef.current();
+        } else if (cmdText.includes('skip') || cmdText.includes('close') || cmdText.includes('terminate') || cmdText.includes('finish') || cmdText.includes('exit') || cmdText.includes('stop')) {
+          skipHandlerRef.current();
+        }
+      };
+
+      rec.onspeechend = () => {
+        if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+        try {
+          rec.stop();
+        } catch (e) {}
+        setIsListening(false);
+      };
+
+      rec.onerror = (err: any) => {
+        console.warn('Speech error in GuidedTour:', err);
+        if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+        setIsListening(false);
+      };
+
+      rec.onend = () => {
+        if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+        setIsListening(false);
+      };
+
+      recognitionRef.current = rec;
+      rec.start();
+    } catch (err) {
+      console.error(err);
+      setIsListening(false);
+    }
+  };
 
   const activeStepObj = TOUR_STEPS[currentStep];
   const IconComponent = activeStepObj.icon;
@@ -198,16 +219,30 @@ export function GuidedTour({ userId, onClose }: GuidedTourProps) {
             <span className="text-[10px] uppercase font-black tracking-widest text-[#1e1b4b]/60 dark:text-indigo-400">
               Guided Tour • Step {currentStep + 1} of {TOUR_STEPS.length}
             </span>
-            <button 
-              onClick={() => {
-                haptics.light();
-                localStorage.setItem(`urbanNet_tour_completed_${userId}`, 'true');
-                onClose();
-              }}
-              className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 border-none bg-transparent cursor-pointer"
-            >
-              Skip
-            </button>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={toggleVoiceCommand}
+                title="Click to speak: 'Next', 'Back', or 'Skip'"
+                className={`p-1.5 rounded-xl border-none cursor-pointer flex items-center space-x-1 text-[9px] font-black uppercase tracking-wider transition-all ${
+                  isListening
+                    ? 'bg-rose-500 text-white animate-pulse'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300'
+                }`}
+              >
+                <Mic size={12} className={isListening ? 'animate-bounce' : ''} />
+                <span>{isListening ? 'Listening' : 'Voice'}</span>
+              </button>
+              <button 
+                onClick={() => {
+                  haptics.light();
+                  localStorage.setItem(`urbanNet_tour_completed_${userId}`, 'true');
+                  onClose();
+                }}
+                className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 border-none bg-transparent cursor-pointer"
+              >
+                Skip
+              </button>
+            </div>
           </div>
 
           <div className="flex flex-col items-center text-center space-y-4 py-3">

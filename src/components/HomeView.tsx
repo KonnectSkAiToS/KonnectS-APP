@@ -2311,7 +2311,7 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
 
             {/* Recharts Area Chart */}
             <div className="w-full h-40 bg-slate-50 dark:bg-slate-900/60 rounded-3xl p-3 relative border border-transparent dark:border-slate-800">
-               <ResponsiveContainer width="100%" height="100%">
+               <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
                   <AreaChart data={formattedSpendingData} margin={{ top: 10, right: 5, left: -25, bottom: 0 }}>
                      <defs>
                         <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
@@ -2829,7 +2829,7 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
 
             {/* Recharts Area Chart */}
             <div className="w-full h-40 bg-slate-50 dark:bg-slate-900/60 rounded-3xl p-3 relative border border-transparent dark:border-slate-800">
-               <ResponsiveContainer width="100%" height="100%">
+               <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
                   <AreaChart data={formattedSpendingData} margin={{ top: 10, right: 5, left: -25, bottom: 0 }}>
                      <defs>
                         <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
@@ -2918,7 +2918,7 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
             </div>
 
             <div className="relative w-full h-44 flex items-center justify-center bg-slate-50 dark:bg-slate-900/60 rounded-3xl p-3">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
                 <PieChart>
                   <Pie
                     data={[
@@ -2964,7 +2964,7 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
             </div>
 
             <div className="w-full h-44 bg-slate-50 dark:bg-slate-900/60 rounded-3xl p-3 relative">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
                  <BarChart data={[
                     { name: 'Mon', mins: 12 },
                     { name: 'Tue', mins: 22 },
