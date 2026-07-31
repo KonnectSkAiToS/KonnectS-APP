@@ -291,7 +291,7 @@ export function ChatView({ recipientId, recipientName, onBack }: ChatViewProps) 
         }));
         setCommunityServerMessages(msgs);
       }, (error) => {
-        console.error("Community chat fetch failed, using fallback state:", error);
+        console.warn("Community chat fetch failed, using fallback state:", error);
       });
 
       return () => {
@@ -313,7 +313,7 @@ export function ChatView({ recipientId, recipientName, onBack }: ChatViewProps) 
         const msgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ChatMessage));
         setMessages(msgs);
       }, (error) => {
-        console.error("Chat fetch failed", error);
+        console.warn("Chat fetch failed", error);
       });
 
       return () => {

@@ -53,7 +53,7 @@ const RIDE_KEYWORDS = [
 ];
 
 export function Header({ onOpenNotifications, unreadCount = 0 }: HeaderProps) {
-  const { profile } = useAuth();
+  const { profile, toggleWorkerMode: authToggleWorkerMode } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [showSearchFeedback, setShowSearchFeedback] = useState(false);
@@ -117,14 +117,10 @@ export function Header({ onOpenNotifications, unreadCount = 0 }: HeaderProps) {
   };
 
   const toggleWorkerMode = async () => {
-    if (!profile?.uid) return;
     try {
-      await updateDoc(doc(db, 'users', profile.uid), {
-        isWorkerMode: !profile.isWorkerMode,
-        updatedAt: serverTimestamp()
-      });
+      await authToggleWorkerMode();
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `users/${profile.uid}`);
+      console.warn('Worker mode toggle error:', error);
     }
   };
 

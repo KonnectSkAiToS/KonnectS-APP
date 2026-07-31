@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Image as ImageIcon } from 'lucide-react';
+import { Image as ImageIcon, Zap } from 'lucide-react';
 import { getCachedImage, cacheImage } from '../utils/indexedDB';
 import { useProgressiveImage } from '../hooks/useProgressiveImage';
 
@@ -13,6 +13,9 @@ interface LazyImageProps {
 export function LazyImage({ src, alt, className = '' }: LazyImageProps) {
   const [isInView, setIsInView] = useState(false);
   const [cachedSrc, setCachedSrc] = useState<string | null>(null);
+  const [isPowerSavingMode, setIsPowerSavingMode] = useState<boolean>(() => {
+    return localStorage.getItem('konnects_manual_power_saving') === 'true';
+  });
   const imgRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -37,6 +40,33 @@ export function LazyImage({ src, alt, className = '' }: LazyImageProps) {
     };
   }, []);
 
+  // Monitor battery level and local power saving configurations
+  useEffect(() => {
+    const checkPowerSaving = () => {
+      const manual = localStorage.getItem('konnects_manual_power_saving') === 'true';
+      const appLowBattery = localStorage.getItem('is_low_battery') === 'true';
+      const batterySaverActive = localStorage.getItem('konnects_battery_saver_active') === 'true';
+      if (manual || appLowBattery || batterySaverActive) {
+        setIsPowerSavingMode(true);
+        return;
+      }
+
+      // Check real-time Battery Status API
+      if (typeof window !== 'undefined' && typeof navigator !== 'undefined' && 'getBattery' in navigator) {
+        (navigator as any).getBattery().then((battery: any) => {
+          const isLow = battery.level <= 0.25 && !battery.charging;
+          setIsPowerSavingMode(isLow || appLowBattery || batterySaverActive);
+        }).catch(() => {});
+      } else {
+        setIsPowerSavingMode(appLowBattery || batterySaverActive);
+      }
+    };
+
+    checkPowerSaving();
+    const interval = setInterval(checkPowerSaving, 2500);
+    return () => clearInterval(interval);
+  }, []);
+
   // Fetch from IndexedDB offline cache first
   useEffect(() => {
     if (isInView && src) {
@@ -46,31 +76,37 @@ export function LazyImage({ src, alt, className = '' }: LazyImageProps) {
         if (cachedData) {
           setCachedSrc(cachedData);
         } else {
-          // Trigger asynchronous background cache download
-          fetch(src, { referrerPolicy: 'no-referrer' })
-            .then((res) => res.blob())
-            .then((blob) => {
-              const reader = new FileReader();
-              reader.onloadend = () => {
-                if (reader.result && typeof reader.result === 'string') {
-                  cacheImage(src, reader.result);
-                }
-              };
-              reader.readAsDataURL(blob);
-            })
-            .catch(() => {});
+          // Trigger asynchronous background cache download for same-origin assets only
+          if (src.startsWith('/') || src.startsWith(window.location.origin)) {
+            fetch(src, { referrerPolicy: 'no-referrer' })
+              .then((res) => {
+                if (!res.ok) return null;
+                return res.blob();
+              })
+              .then((blob) => {
+                if (!blob) return;
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                  if (reader.result && typeof reader.result === 'string') {
+                    cacheImage(src, reader.result);
+                  }
+                };
+                reader.readAsDataURL(blob);
+              })
+              .catch(() => {});
+          }
         }
       });
       return () => {
         active = false;
       };
     }
-  }, [src, isInView]);
+  }, [src, isInView, isPowerSavingMode]);
 
   // Use the progressive loading hook to manage blur-up
   const targetSrc = cachedSrc || src;
   const { currentSrc, loading } = useProgressiveImage(isInView ? targetSrc : '', {
-    delay: 150 // Add a subtle delay to guarantee progressive blur-up visual feedback
+    delay: isPowerSavingMode ? 0 : 150 // Bypass transition delay in power saving mode, but still load!
   });
 
   return (

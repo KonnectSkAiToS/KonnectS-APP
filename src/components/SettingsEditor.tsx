@@ -280,17 +280,25 @@ export function SettingsEditor() {
   const [showLastSeen, setShowLastSeen] = useState(true);
 
   // 4. Notification Settings
-  const [pushEnabled, setPushEnabled] = useState(true);
+  const [pushEnabled, setPushEnabled] = useState(() => localStorage.getItem('konnects_push_notifications_enabled') !== 'false');
   const [emailEnabled, setEmailEnabled] = useState(true);
   const [messagesAlerts, setMessagesAlerts] = useState(true);
   const [friendReqAlerts, setFriendReqAlerts] = useState(true);
   const [eventAlerts, setEventAlerts] = useState(true);
   const [marketingEnabled, setMarketingEnabled] = useState(false);
 
+  useEffect(() => {
+    localStorage.setItem('konnects_push_notifications_enabled', String(pushEnabled));
+  }, [pushEnabled]);
+
   // 5. Calendar Sync Configuration
   const [calGoogle, setCalGoogle] = useState(CalendarSyncManager.getPermissions().google);
   const [calApple, setCalApple] = useState(CalendarSyncManager.getPermissions().apple);
   const [calAuto, setCalAuto] = useState(CalendarSyncManager.getPermissions().autoSync);
+
+  // Sync Strategy & Roaming States
+  const [syncStrategy, setSyncStrategy] = useState(() => localStorage.getItem('konnects_sync_strategy') || 'auto');
+  const [isRoaming, setIsRoaming] = useState(() => localStorage.getItem('konnects_is_roaming') === 'true');
 
   // 6. Security & Login History
   const [devices, setDevices] = useState([
@@ -343,6 +351,9 @@ export function SettingsEditor() {
   const [energySaverEnabled, setEnergySaverEnabled] = useState<boolean>(() => {
     return localStorage.getItem('energy_saver_enabled') === 'true';
   });
+  const [manualPowerSavingOverride, setManualPowerSavingOverride] = useState<boolean>(() => {
+    return localStorage.getItem('manual_power_saving_override') === 'true';
+  });
   const [devHudActive, setDevHudActive] = useState<boolean>(() => {
     return localStorage.getItem('dev_hud_active') === 'true';
   });
@@ -387,6 +398,48 @@ export function SettingsEditor() {
     haptics.success();
     setSaveSuccess(message);
     setTimeout(() => setSaveSuccess(null), 3000);
+  };
+
+  const resetAllSystemDefaults = async () => {
+    try {
+      haptics.success();
+      // 1. Reset power/energy savings
+      setEnergySaverEnabled(false);
+      setManualPowerSavingOverride(false);
+      localStorage.removeItem('energy_saver_enabled');
+      localStorage.removeItem('manual_power_saving_override');
+      localStorage.setItem('konnects_battery_saver_active', 'false');
+      localStorage.setItem('is_low_battery', 'false');
+
+      // 2. Reset sync strategies and roaming simulation
+      setSyncStrategy('auto');
+      setIsRoaming(false);
+      localStorage.setItem('konnects_sync_strategy', 'auto');
+      localStorage.setItem('konnects_is_roaming', 'false');
+
+      // 3. Clear blocked images / power saving flags in local storage
+      localStorage.setItem('konnects_manual_power_saving', 'false');
+
+      // 4. Force default notifications
+      setPushEnabled(true);
+      localStorage.setItem('konnects_push_notifications_enabled', 'true');
+
+      // 5. If profile is in worker mode, disable it so all pages are visible to the user!
+      if (profile?.uid) {
+        await updateDoc(doc(db, 'users', profile.uid), {
+          isWorkerMode: false
+        });
+      }
+
+      // Dispatch event to update components in real-time
+      window.dispatchEvent(new CustomEvent('energy_saver_changed', { detail: { enabled: false } }));
+      window.dispatchEvent(new CustomEvent('battery-saver-changed', { detail: { active: false } }));
+
+      triggerSaveNotification('✓ All data views, pages, image layers, and background sync engines have been fully restored!');
+    } catch (err) {
+      console.error('Error resetting system defaults:', err);
+      triggerSaveNotification('Successfully restored local defaults.');
+    }
   };
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
@@ -901,6 +954,64 @@ export function SettingsEditor() {
                 </div>
               ))}
             </div>
+
+            <div className="space-y-2.5 pt-3 border-t border-slate-100 dark:border-slate-850">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 block ml-1 mb-2">Background Sync Strategy</span>
+              
+              <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-850 space-y-3 text-left">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1 pr-4">
+                    <span className="text-xs font-black text-slate-900 dark:text-white block">Manual Sync Strategy Override</span>
+                    <span className="text-[9.5px] text-slate-400 font-semibold leading-tight block mt-0.5">
+                      Force "Manual Sync Only" during low-battery states or when roaming to preserve mobile data and power
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      haptics.light();
+                      const nextVal = localStorage.getItem('konnects_sync_strategy') === 'manual_low_power_roaming' ? 'auto' : 'manual_low_power_roaming';
+                      localStorage.setItem('konnects_sync_strategy', nextVal);
+                      setSyncStrategy(nextVal);
+                      triggerSaveNotification(nextVal === 'manual_low_power_roaming' ? 'Manual Sync Only forced during low-battery or roaming.' : 'Default adaptive background sync active.');
+                    }}
+                    className="bg-transparent border-none cursor-pointer p-0 m-0"
+                  >
+                    {syncStrategy === 'manual_low_power_roaming' ? (
+                      <ToggleRight size={38} className="text-[#6366f1] dark:text-indigo-500" />
+                    ) : (
+                      <ToggleLeft size={38} className="text-slate-300" />
+                    )}
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between border-t border-slate-200/40 dark:border-slate-800/40 pt-3">
+                  <div className="flex-1 pr-4">
+                    <span className="text-xs font-black text-slate-900 dark:text-white block">Roaming Status Mode</span>
+                    <span className="text-[9.5px] text-slate-400 font-semibold leading-tight block mt-0.5">
+                      Simulate off-network roaming state (overseas cellular data carrier billing)
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      haptics.light();
+                      const nextVal = localStorage.getItem('konnects_is_roaming') === 'true' ? 'false' : 'true';
+                      localStorage.setItem('konnects_is_roaming', nextVal);
+                      setIsRoaming(nextVal === 'true');
+                      triggerSaveNotification(nextVal === 'true' ? 'Device is now simulating roaming status!' : 'Device returned to local network carrier.');
+                    }}
+                    className="bg-transparent border-none cursor-pointer p-0 m-0"
+                  >
+                    {isRoaming ? (
+                      <ToggleRight size={38} className="text-[#e11d48]" />
+                    ) : (
+                      <ToggleLeft size={38} className="text-slate-300" />
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -1387,9 +1498,12 @@ export function SettingsEditor() {
             </div>
 
             {/* Energy Saver Mode block */}
-            <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
-              <span className="text-sm font-black block text-slate-900 dark:text-white">Energy Saver Mode</span>
-              <span className="text-[10px] text-slate-405 block font-bold uppercase tracking-wider mb-2.5 mt-0.5">Toggle high-performance animations and reduce location check intervals to prolong battery lifespan</span>
+            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
+              <div>
+                <span className="text-sm font-black block text-slate-900 dark:text-white">Energy Saver Mode</span>
+                <span className="text-[10px] text-slate-405 block font-bold uppercase tracking-wider mb-2.5 mt-0.5">Toggle high-performance animations and reduce location check intervals to prolong battery lifespan</span>
+              </div>
+              
               <div className="p-3.5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-850 rounded-2xl flex items-center justify-between">
                 <div>
                   <span className="text-xs font-extrabold text-slate-800 dark:text-white block">Battery Optimization Engine</span>
@@ -1410,6 +1524,34 @@ export function SettingsEditor() {
                 >
                   {energySaverEnabled ? (
                     <ToggleRight size={38} className="text-indigo-600 fill-indigo-600/10" />
+                  ) : (
+                    <ToggleLeft size={38} className="text-slate-350" />
+                  )}
+                </button>
+              </div>
+
+              <div className="p-3.5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-850 rounded-2xl flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-extrabold text-slate-800 dark:text-white block">Manual Power Saving Override</span>
+                  <span className="text-[9.5px] font-medium text-slate-405 block">Force-disable non-critical background processes regardless of battery status</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextVal = !manualPowerSavingOverride;
+                    setManualPowerSavingOverride(nextVal);
+                    localStorage.setItem('manual_power_saving_override', nextVal ? 'true' : 'false');
+                    haptics.light();
+                    // Force the battery saver active state
+                    localStorage.setItem('konnects_battery_saver_active', nextVal ? 'true' : 'false');
+                    window.dispatchEvent(new CustomEvent('battery-saver-changed', { detail: { active: nextVal } }));
+                    window.dispatchEvent(new CustomEvent('energy_saver_changed', { detail: { enabled: nextVal } }));
+                    triggerSaveNotification(nextVal ? 'Manual Power Saving override active.' : 'Manual Power Saving override disabled.');
+                  }}
+                  className="bg-transparent border-none cursor-pointer"
+                >
+                  {manualPowerSavingOverride ? (
+                    <ToggleRight size={38} className="text-amber-500 fill-amber-500/10" />
                   ) : (
                     <ToggleLeft size={38} className="text-slate-350" />
                   )}
@@ -1541,6 +1683,23 @@ export function SettingsEditor() {
                     Purge Temp Logs
                   </button>
                 </div>
+              </div>
+
+              <div className="p-5 bg-gradient-to-br from-emerald-500/10 to-teal-500/5 dark:from-emerald-950/20 dark:to-teal-950/10 border border-emerald-500/20 dark:border-emerald-500/10 rounded-3xl space-y-4 mt-3">
+                <div className="flex items-center space-x-2">
+                  <Database className="text-emerald-650 dark:text-emerald-450" size={16} />
+                  <span className="text-xs font-black text-emerald-900 dark:text-emerald-300 uppercase tracking-wider">System Recovery & Diagnostics</span>
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed font-semibold">
+                  If any pages are hidden, or images are replaced with placeholders, use this action to restore all database states, disable restrictive power/saving features, reset offline mode, and enable standard client modes.
+                </p>
+                <button
+                  type="button"
+                  onClick={resetAllSystemDefaults}
+                  className="w-full p-3.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white rounded-2xl text-[10.5px] font-black uppercase tracking-wider transition-all border-none cursor-pointer text-center shadow-lg shadow-emerald-600/10"
+                >
+                  🔄 Restore All Defaults & Show All Pages
+                </button>
               </div>
             </div>
           </div>

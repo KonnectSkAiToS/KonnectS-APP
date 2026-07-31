@@ -62,6 +62,11 @@ export interface UserProfile {
   earnedBadges?: string[];
   isPremiumWorker?: boolean;
   premiumExpiryDate?: string;
+  skills?: string[];
+  verificationPhoto?: string | null;
+  loginCount?: number;
+  updatedAt?: any;
+  moderationState?: 'Warning' | 'Temporary Block' | 'Permanent Block' | 'Active';
   createdAt: any;
 }
 

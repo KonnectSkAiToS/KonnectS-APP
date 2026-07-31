@@ -12,7 +12,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { db } from '../lib/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
-type Tab = 'home' | 'marketplace' | 'services' | 'rides' | 'profile';
+type Tab = 'home' | 'marketplace' | 'services' | 'rides' | 'profile' | 'workspace';
 
 interface NavigationProps {
   activeTab: Tab;
@@ -134,7 +134,7 @@ export function Navigation({ activeTab, setActiveTab }: NavigationProps) {
   };
 
   const tabs: { id: Tab; icon: any; label: string }[] = [
-    { id: 'home', icon: Home, label: t('nav.home') },
+    { id: 'home', icon: profile?.isWorkerMode ? Briefcase : Home, label: profile?.isWorkerMode ? 'Worker Pro' : t('nav.home') },
     { id: 'marketplace', icon: ShoppingBag, label: t('nav.marketplace') },
     { id: 'services', icon: Briefcase, label: t('nav.services') },
     { id: 'rides', icon: Car, label: t('nav.rides') },

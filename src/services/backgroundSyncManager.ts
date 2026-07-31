@@ -28,6 +28,17 @@ export async function processBackgroundSyncQueue() {
     return;
   }
 
+  // Check manual sync strategy override
+  const syncStrategy = localStorage.getItem('konnects_sync_strategy') || 'auto';
+  if (syncStrategy === 'manual_low_power_roaming') {
+    const isLow = localStorage.getItem('is_low_battery') === 'true' || batteryManager.isBatteryLow();
+    const isRoaming = localStorage.getItem('konnects_is_roaming') === 'true';
+    if (isLow || isRoaming) {
+      console.log('[BackgroundSync] Sync Strategy Override active: Manual Sync Only is forced during low-battery or roaming. Auto sync postponed.');
+      return;
+    }
+  }
+
   isSyncing = true;
   console.log('[BackgroundSync] Starting synchronization process...');
 

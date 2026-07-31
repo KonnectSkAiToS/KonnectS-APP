@@ -12,6 +12,7 @@ import { MarketplaceView } from './components/MarketplaceView';
 import { ServicesView } from './components/ServicesView';
 import { RidesView } from './components/RidesView';
 import { ProfileView } from './components/ProfileView';
+import { WorkspaceHub } from './components/WorkspaceHub';
 import { LoginView } from './components/LoginView';
 import { WorkerView } from './components/WorkerView';
 import { GeminiAssistant } from './components/GeminiAssistant';
@@ -26,8 +27,12 @@ import { GuidedTour } from './components/GuidedTour';
 import { startRealtimeDbSync } from './services/dbSyncService';
 import { ReportIssueModal } from './components/ReportIssueModal';
 import { haptics } from './utils/haptics';
+import { initBackgroundSync } from './services/backgroundSyncManager';
+import { doc, updateDoc } from 'firebase/firestore';
+import { db } from './lib/firebase';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
-type Tab = 'home' | 'marketplace' | 'services' | 'rides' | 'profile';
+type Tab = 'home' | 'marketplace' | 'services' | 'rides' | 'profile' | 'workspace';
 
 function AppContent() {
   const { user, profile, loading } = useAuth();
@@ -36,6 +41,15 @@ function AppContent() {
   const [toastNotification, setToastNotification] = useState<NotificationItem | null>(null);
   const [showGuidedTour, setShowGuidedTour] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
+  const [forceLoaded, setForceLoaded] = useState(false);
+  const [showBypass, setShowBypass] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setShowBypass(true);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     (window as any).__activeTab = activeTab;
@@ -46,6 +60,22 @@ function AppContent() {
     const applyAllThemes = () => {
       const selectedTheme = localStorage.getItem('appearance_theme') || 'light';
       
+      // Temporarily inject a CSS style block to force a smooth transition on body, backgrounds, and text
+      let style = document.getElementById('theme-transition-style');
+      if (!style) {
+        style = document.createElement('style');
+        style.id = 'theme-transition-style';
+        document.head.appendChild(style);
+      }
+      style.innerHTML = `
+        *, *::before, *::after {
+          transition: background-color 0.4s cubic-bezier(0.4, 0, 0.2, 1) !important,
+                      border-color 0.4s cubic-bezier(0.4, 0, 0.2, 1) !important,
+                      color 0.4s cubic-bezier(0.4, 0, 0.2, 1) !important,
+                      box-shadow 0.4s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        }
+      `;
+
       // Clean previous classes
       document.documentElement.classList.remove('dark', 'high-contrast', 'eye-protection');
       
@@ -61,6 +91,14 @@ function AppContent() {
           document.documentElement.classList.add('dark');
         }
       }
+
+      // Remove the transition style block after the animation completes to prevent layout transition lag on hover
+      setTimeout(() => {
+        const styleToRemove = document.getElementById('theme-transition-style');
+        if (styleToRemove) {
+          styleToRemove.remove();
+        }
+      }, 500);
     };
 
     applyAllThemes();
@@ -94,9 +132,28 @@ function AppContent() {
     }
   }, [user]);
 
+  const [isLowBattery, setIsLowBattery] = useState(false);
+
+  // Initialize offline background sync manager
+  useEffect(() => {
+    initBackgroundSync();
+  }, []);
+
+  // Monitor battery status and toggle battery saver (disabled)
+  useEffect(() => {
+    localStorage.setItem('is_low_battery', 'false');
+  }, []);
+
   // Hook up booking & ride status update listeners and 15m schedule checker in background
   useEffect(() => {
     if (!user?.uid) return;
+    
+    // In battery saver mode, we disable non-critical background polling / real-time updates
+    if (isLowBattery) {
+      console.log('[Battery Saver] Background polling suspended.');
+      return;
+    }
+
     const unsubBookings = startBookingNotificationListener(user.uid);
     const unsubRides = listenToRideLocalChanges();
     const unsubScheduledChecker = startScheduledRideNotificationChecker();
@@ -108,7 +165,7 @@ function AppContent() {
       unsubScheduledChecker();
       unsubDbSync();
     };
-  }, [user]);
+  }, [user, isLowBattery]);
 
   // Setup toast notifier handler
   useEffect(() => {
@@ -176,10 +233,22 @@ function AppContent() {
     };
   }, []);
 
-  if (loading) {
+
+  if (loading && !forceLoaded) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-100 dark:bg-slate-950 transition-colors duration-200 p-6 select-none font-sans">
         <div className="w-12 h-12 border-4 border-brand border-t-transparent rounded-full animate-spin"></div>
+        {showBypass && (
+          <div className="mt-6 flex flex-col items-center space-y-3 animate-pulse text-center">
+            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">Bypassing network sync / auth loading...</p>
+            <button
+              onClick={() => setForceLoaded(true)}
+              className="px-4 py-2 bg-brand text-white font-extrabold text-[10px] uppercase tracking-widest rounded-xl transition-all shadow-md active:scale-95 border-none cursor-pointer"
+            >
+              Enter Application
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -189,9 +258,8 @@ function AppContent() {
   }
 
   const renderView = () => {
-    // If worker mode is ON, show worker dashboard instead of home/services/rides
-    if (profile?.isWorkerMode && (activeTab === 'home' || activeTab === 'services' || activeTab === 'rides')) {
-       return <WorkerView onChat={(id, name) => setChattingWith({ id, name })} activeTab={activeTab} />;
+    if (profile?.isWorkerMode && (activeTab === 'home' || activeTab === 'services')) {
+      return <WorkerView onChat={(id, name) => setChattingWith({ id, name })} activeTab={activeTab} />;
     }
 
     switch (activeTab) {
@@ -200,6 +268,7 @@ function AppContent() {
       case 'services': return <ServicesView onChat={(id, name) => setChattingWith({ id, name })} />;
       case 'rides': return <RidesView />;
       case 'profile': return <ProfileView />;
+      case 'workspace': return <WorkspaceHub />;
       default: return <HomeView />;
     }
   };
@@ -318,10 +387,12 @@ function AppContent() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <LanguageProvider>
-        <AppContent />
-      </LanguageProvider>
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <LanguageProvider>
+          <AppContent />
+        </LanguageProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }

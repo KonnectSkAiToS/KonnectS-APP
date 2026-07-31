@@ -1,6 +1,15 @@
 import { collection, onSnapshot, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { 
+  saveOfflineSyncItem, 
+  removeOfflineSyncItem, 
+  clearOfflineSyncQueue, 
+  getOfflineSyncQueue,
+  saveCriticalData,
+  removeCriticalData,
+  getCriticalCollection
+} from '../utils/indexedDB';
 
 export interface SyncLog {
   id: string;
@@ -255,24 +264,35 @@ export function startRealtimeDbSync() {
           const pSummary = docData[summaryField] || 'N/A';
 
           if (change.type === 'removed') {
+            // Delete locally from IndexedDB cache
+            removeCriticalData(colName, docId);
+
             // Document deleted in Firestore - delete in Supabase
             if (isSupabaseConfigured() && supabase && !unreadyTables.has(tableName)) {
-              const { error } = await supabase
-                .from(tableName)
-                .delete()
-                .eq(colName === 'users' ? 'uid' : 'id', docId);
+              try {
+                const { error } = await supabase
+                  .from(tableName)
+                  .delete()
+                  .eq(colName === 'users' ? 'uid' : 'id', docId);
 
-              if (error) {
+                if (error) {
+                  unreadyTables.add(tableName);
+                  console.warn(`[SyncEngine] Supabase table '${tableName}' has schema/permission exceptions. Bypassing further real-time updates:`, error.message);
+                  logSyncEvent(colName, docId, 'DELETED', pSummary, 'success', 'simulated', error.message);
+                } else {
+                  logSyncEvent(colName, docId, 'DELETED', pSummary, 'success', 'success');
+                }
+              } catch (e: any) {
                 unreadyTables.add(tableName);
-                console.warn(`[SyncEngine] Supabase table '${tableName}' has schema/permission exceptions. Bypassing further real-time updates:`, error.message);
-                logSyncEvent(colName, docId, 'DELETED', pSummary, 'success', 'simulated', error.message);
-              } else {
-                logSyncEvent(colName, docId, 'DELETED', pSummary, 'success', 'success');
+                logSyncEvent(colName, docId, 'DELETED', pSummary, 'success', 'simulated', e?.message || 'Network error');
               }
             } else {
               logSyncEvent(colName, docId, 'DELETED', pSummary, 'success', 'simulated');
             }
           } else {
+            // Save locally to IndexedDB cache
+            saveCriticalData(colName, docId, docData);
+
             // Document added/modified
             const actionType = change.type === 'added' ? 'ADDED' : 'MODIFIED';
             const mappedPayload = mapper(docId, docData);
@@ -438,17 +458,23 @@ export async function runFullBatchMigration() {
         const mapped = config.mapper(id, d.data());
 
         if (!unreadyTables.has(config.table)) {
-          const { error } = await supabase
-            .from(config.table)
-            .upsert(mapped as any);
+          try {
+            const { error } = await supabase
+              .from(config.table)
+              .upsert(mapped as any);
 
-          if (error) {
+            if (error) {
+              unreadyTables.add(config.table);
+              resultStats[keyName].failed++;
+              logSyncEvent(config.collection, id, 'MIGRATED', `Batch: ${id}`, 'success', 'simulated', error.message);
+            } else {
+              resultStats[keyName].success++;
+              logSyncEvent(config.collection, id, 'MIGRATED', `Batch: ${id}`, 'success', 'success');
+            }
+          } catch (e: any) {
             unreadyTables.add(config.table);
             resultStats[keyName].failed++;
-            logSyncEvent(config.collection, id, 'MIGRATED', `Batch: ${id}`, 'success', 'simulated', error.message);
-          } else {
-            resultStats[keyName].success++;
-            logSyncEvent(config.collection, id, 'MIGRATED', `Batch: ${id}`, 'success', 'success');
+            logSyncEvent(config.collection, id, 'MIGRATED', `Batch: ${id}`, 'success', 'simulated', e?.message || 'Network error');
           }
         } else {
           resultStats[keyName].success++;
@@ -478,6 +504,22 @@ export interface OfflineSyncItem {
 // Global In-Memory Offline Queue
 export const offlineSyncQueue: OfflineSyncItem[] = [];
 
+// Initialize the in-memory queue from IndexedDB on startup
+if (typeof window !== 'undefined') {
+  getOfflineSyncQueue().then((items) => {
+    if (items && items.length > 0) {
+      items.forEach(item => {
+        if (!offlineSyncQueue.some(existing => existing.id === item.id)) {
+          offlineSyncQueue.push(item);
+        }
+      });
+      window.dispatchEvent(new Event('offline-queue-updated'));
+    }
+  }).catch(err => {
+    console.error('[dbSyncService] Failed to initialize offlineSyncQueue from IndexedDB:', err);
+  });
+}
+
 /**
  * Queues an item for synchronization when connection is re-established
  */
@@ -490,7 +532,9 @@ export function queueOfflineSync(id: string, table: string, action: 'UPSERT' | '
     timestamp: Date.now()
   };
   offlineSyncQueue.push(newItem);
+  saveOfflineSyncItem(newItem); // Persistent IndexedDB write
   logSyncEvent(table, id, action === 'UPSERT' ? 'ADDED' : 'DELETED', `Queued offline: ${id}`, 'idle', 'simulated');
+  window.dispatchEvent(new Event('offline-queue-updated'));
   return newItem;
 }
 
@@ -499,6 +543,8 @@ export function queueOfflineSync(id: string, table: string, action: 'UPSERT' | '
  */
 export function clearOfflineQueue() {
   offlineSyncQueue.length = 0;
+  clearOfflineSyncQueue(); // Persistent IndexedDB clear
+  window.dispatchEvent(new Event('offline-queue-updated'));
 }
 
 /**

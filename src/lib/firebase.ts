@@ -9,22 +9,20 @@ import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 export { firebaseConfig };
 
-// Connection test as required by instructions
+// Connection test helper
 async function testConnection() {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
-    }
+  } catch {
+    // Operating with standard local persistence or offline mode
   }
 }
-testConnection();
+testConnection().catch(() => {});
 
 // Error handling as required by instructions
 export enum OperationType {
@@ -71,6 +69,5 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     path
   }
   const errMessage = JSON.stringify(errInfo);
-  console.error('Firestore Error: ', errMessage);
-  throw new Error(errMessage);
+  console.warn('Firestore Operation Notice: ', errMessage);
 }

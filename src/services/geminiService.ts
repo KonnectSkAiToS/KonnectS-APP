@@ -20,7 +20,7 @@ export async function askAI(prompt: string, context?: string) {
     const data = await response.json();
     return data.text;
   } catch (error) {
-    console.error("Gemini AI failed:", error);
+    console.warn("Gemini AI failed:", error);
     return "I'm sorry, I'm having trouble connecting to my brain right now. How can I help you manually?";
   }
 }
@@ -36,7 +36,7 @@ export async function getQuickReplies(lastMessage: string): Promise<string[]> {
     const data = await response.json();
     return data.replies || [];
   } catch (error) {
-    console.error("Quick replies failed:", error);
+    console.warn("Quick replies failed:", error);
     return ["Sounds good!", "Sure thing.", "I will check."];
   }
 }
@@ -51,7 +51,7 @@ export async function getReviewSummary(reviews: string[]): Promise<{ summary: st
     if (!response.ok) throw new Error('Failed to get review summary');
     return await response.json();
   } catch (error) {
-    console.error("Review summary failed:", error);
+    console.warn("Review summary failed:", error);
     return {
       summary: "Highly rated local service provider with consistent praise for prompt communication and transparent pricing.",
       highlights: ["Reliable", "Fair Pricing", "Responsive"]

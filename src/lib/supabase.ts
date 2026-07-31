@@ -41,7 +41,7 @@ export function initializeSupabaseClient() {
       supabase = createClient(supabaseUrl, supabaseAnonKey);
       console.log('[Supabase] Client initialized successfully for:', supabaseUrl);
     } catch (error) {
-      console.error('[Supabase] Failed to initialize Supabase client:', error);
+      console.warn('[Supabase] Failed to initialize Supabase client:', error);
       supabase = null;
     }
   } else {

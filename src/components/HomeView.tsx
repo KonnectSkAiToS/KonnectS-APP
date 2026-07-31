@@ -33,7 +33,7 @@ const tipIconsMap: Record<string, any> = {
 };
 
 export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => void }) {
-  const { profile } = useAuth();
+  const { profile, toggleWorkerMode: authToggleWorkerMode } = useAuth();
   const [proTips, setProTips] = useState<any[]>([]);
   const [loadingTips, setLoadingTips] = useState(true);
   const [safetyAlerts, setSafetyAlerts] = useState([
@@ -137,6 +137,7 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
           location: userLocationName || 'London'
         })
       });
+      if (!response.ok) throw new Error('Failed to reschedule');
       const data = await response.json();
       if (data.suggestions) {
         setRescheduleSuggestions(data.suggestions);
@@ -365,12 +366,13 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ origin: originName })
       });
+      if (!resp.ok) throw new Error('Failed to fetch commute insights');
       const data = await resp.json();
       if (data.insights) {
         setCommuteInsights(data.insights);
       }
     } catch (err) {
-      console.error("Failed to load commute insights:", err);
+      console.warn("Failed to load commute insights:", err);
     } finally {
       setLoadingCommuteInsights(false);
     }
@@ -439,12 +441,13 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
             location: locationDetails
           })
         });
+        if (!response.ok) throw new Error('Failed to fetch recommendations');
         const data = await response.json();
         if (data.recommendations) {
           setRecommendations(data.recommendations);
         }
       } catch (err) {
-        console.error("Failed to load recommendations:", err);
+        console.warn("Failed to load recommendations:", err);
       } finally {
         setLoadingRecommendations(false);
       }
@@ -675,15 +678,11 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
   };
 
   const toggleWorkerMode = async () => {
-     if (!profile?.uid) return;
-     try {
-       await updateDoc(doc(db, 'users', profile.uid), {
-         isWorkerMode: !profile.isWorkerMode,
-         updatedAt: serverTimestamp()
-       });
-     } catch (error) {
-       handleFirestoreError(error, OperationType.UPDATE, `users/${profile.uid}`);
-     }
+    try {
+      await authToggleWorkerMode();
+    } catch (error) {
+      console.warn('Worker mode toggle error:', error);
+    }
   };
 
   const [activeRequests, setActiveRequests] = useState<ServiceBooking[]>([]);
@@ -695,7 +694,7 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
       const savedRide = localStorage.getItem('urbanNet_activeRide');
       return savedRide ? JSON.parse(savedRide) : null;
     } catch (e) {
-      console.error(e);
+      console.warn(e);
       return null;
     }
   });
@@ -704,7 +703,7 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
       const savedViewed = localStorage.getItem('urbanNet_recentlyViewed');
       return savedViewed ? JSON.parse(savedViewed) : [];
     } catch (e) {
-      console.error(e);
+      console.warn(e);
       return [];
     }
   });
@@ -760,7 +759,7 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
         }
       }
     } catch (err) {
-      console.error(err);
+      console.warn(err);
       setIsAnalyzing(false);
       if ((window as any).__openAssistantWithMessage) {
         (window as any).__openAssistantWithMessage(
@@ -779,7 +778,7 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
       try {
         setActiveRequests(JSON.parse(cachedTasks));
       } catch (e) {
-        console.error("Error parsing cached pending tasks:", e);
+        console.warn("Error parsing cached pending tasks:", e);
       }
     }
     
@@ -801,7 +800,7 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
         try {
           setActiveRequests(JSON.parse(cachedTasksBackup));
         } catch (e) {
-          console.error(e);
+          console.warn(e);
         }
       }
     });
@@ -846,8 +845,25 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
     { icon: MoreHorizontal, label: 'More', color: 'bg-slate-50 text-slate-600', tooltip: 'More: Learn about local initiatives and rewards points' },
   ];
 
+  const staggerContainer = {
+    hidden: { opacity: 0 },
+    show: {
+      opacity: 1,
+      transition: {
+        staggerChildren: 0.04,
+        delayChildren: 0.05
+      }
+    }
+  };
+
   return (
-    <div className="max-w-md mx-auto h-[calc(100dvh-64px)] max-h-[calc(100dvh-64px)] overflow-hidden flex flex-col pt-3 px-4 pb-2 w-full">
+    <motion.div 
+      variants={staggerContainer}
+      initial="hidden"
+      animate="show"
+      exit="hidden"
+      className="max-w-md mx-auto h-[calc(100dvh-64px)] max-h-[calc(100dvh-64px)] overflow-hidden flex flex-col pt-3 px-4 pb-2 w-full"
+    >
       {showFetch && <FetchView onBack={() => setShowFetch(false)} />}
       {showCharity && <CharityView onBack={() => setShowCharity(false)} />}
       {showMap && <MapView onBack={() => setShowMap(false)} />}
@@ -1212,6 +1228,30 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
                     ))}
                   </div>
                 )}
+
+                {/* Google Workspace Suite Quick Access Banner */}
+                <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-5 rounded-3xl border border-indigo-500/30 relative overflow-hidden shadow-sm text-left mb-6">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl -mr-10 -mt-10"></div>
+                  <div className="flex items-center space-x-2.5 text-indigo-400">
+                    <Database size={14} className="animate-pulse" />
+                    <span className="text-[9px] font-black uppercase tracking-widest">Administrative Integrations Suite</span>
+                  </div>
+                  <h4 className="text-xs font-black tracking-tight text-white mt-1.5 uppercase">Launch Google Workspace Hub</h4>
+                  <p className="text-[10px] text-slate-350 leading-relaxed font-semibold mt-1 max-w-sm">
+                    Access spreadsheets, presentations, scheduled conferences, class rosters, and task lists. Sync information in real-time.
+                  </p>
+                  <button
+                    onClick={() => {
+                      haptics.heavy();
+                      if ((window as any).__navigateTab) {
+                        (window as any).__navigateTab('workspace');
+                      }
+                    }}
+                    className="mt-3 py-2 px-4 bg-white hover:bg-slate-100 text-slate-900 font-black text-[9px] uppercase tracking-wider rounded-xl transition-all border-none cursor-pointer active:scale-95"
+                  >
+                    Launch Workspace Hub &rarr;
+                  </button>
+                </div>
 
                 {/* Dynamic Grid Layout: Community Trends & Nearby Services */}
                 <motion.div 
@@ -1901,12 +1941,13 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
                         location: { lat: 51.5260, lng: -0.0780, name: 'Shoreditch, London' }
                       })
                     });
+                    if (!response.ok) throw new Error('Failed to fetch recommendations');
                     const data = await response.json();
                     if (data.recommendations) {
                       setRecommendations(data.recommendations);
                     }
                   } catch (e) {
-                    console.error("Failed to sync recommendations:", e);
+                    console.warn("Failed to sync recommendations:", e);
                   } finally {
                     setLoadingRecommendations(false);
                   }
@@ -3432,6 +3473,6 @@ export function HomeView({ onNavigateReferral }: { onNavigateReferral?: () => vo
           </div>
         )}
       </AnimatePresence>
-    </div>
+    </motion.div>
   );
 }

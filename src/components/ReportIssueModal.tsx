@@ -34,20 +34,23 @@ export function ReportIssueModal({ isOpen, onClose, activeTab }: ReportIssueModa
   // Update diagnostics if modal opens or state changes
   useEffect(() => {
     if (isOpen) {
-      setDiagnostics({
-        activeTab,
-        uid: auth.currentUser?.uid || 'anonymous',
-        email: auth.currentUser?.email || 'N/A',
-        emailVerified: auth.currentUser?.emailVerified ? 'Verified' : 'Unverified',
-        networkStatus: navigator.onLine ? 'Online' : 'Offline',
-        localTime: new Date().toLocaleString(),
-        userAgent: navigator.userAgent,
-        screenResolution: `${window.innerWidth}x${window.innerHeight}`,
-        devicePixelRatio: window.devicePixelRatio,
-      });
-      setSuccess(false);
-      setDescription('');
-      setErrorMsg(null);
+      const timer = setTimeout(() => {
+        setDiagnostics({
+          activeTab,
+          uid: auth.currentUser?.uid || 'anonymous',
+          email: auth.currentUser?.email || 'N/A',
+          emailVerified: auth.currentUser?.emailVerified ? 'Verified' : 'Unverified',
+          networkStatus: navigator.onLine ? 'Online' : 'Offline',
+          localTime: new Date().toLocaleString(),
+          userAgent: navigator.userAgent,
+          screenResolution: `${window.innerWidth}x${window.innerHeight}`,
+          devicePixelRatio: window.devicePixelRatio,
+        });
+        setSuccess(false);
+        setDescription('');
+        setErrorMsg(null);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [isOpen, activeTab]);
 

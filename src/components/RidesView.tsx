@@ -94,6 +94,7 @@ export function RidesView() {
   const [isTrafficPeak, setIsTrafficPeak] = useState(true); // Active standard PM peak congestion
   const [tflSuggestion, setTflSuggestion] = useState<any>(null);
   const [recurringSuggestions, setRecurringSuggestions] = useState<any[]>([]);
+  const [sortBy, setSortBy] = useState<'price' | 'time' | 'rating'>('price');
 
   useEffect(() => {
     // Initialize global_voice_command_history if empty to seed realistic suggestions
@@ -351,6 +352,19 @@ export function RidesView() {
     { id: '2', driver: 'Sarah K.', car: 'Toyota Prius (Hybrid)', rating: 4.8, price: 9.50, time: '5 min', phone: '+44 7700 900088', color: 'text-teal-600', isVerifiedSafe: true },
     { id: '3', driver: 'James L.', car: 'Mercedes EQE (EV)', rating: 5.0, price: 18.00, time: '3 min', phone: '+44 7700 900099', color: 'text-rose-600', isVerifiedSafe: true }
   ];
+
+  const sortedDrivers = [...mockDrivers].sort((a, b) => {
+    if (sortBy === 'price') {
+      return a.price - b.price;
+    } else if (sortBy === 'time') {
+      const timeA = parseInt(a.time) || 0;
+      const timeB = parseInt(b.time) || 0;
+      return timeA - timeB;
+    } else if (sortBy === 'rating') {
+      return b.rating - a.rating;
+    }
+    return 0;
+  });
 
   // Synchronize active ride state with local storage
   useEffect(() => {
@@ -1117,6 +1131,32 @@ export function RidesView() {
                   <span className="text-[8px] font-black uppercase tracking-widest text-emerald-600">Active DBS Insured</span>
                 </div>
               </div>
+
+              {/* Sorting Filter Selector */}
+              <div className="bg-slate-50 p-2 rounded-2xl border border-slate-100 flex items-center justify-between">
+                <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 pl-1.5">Sort Drivers:</span>
+                <div className="flex space-x-1">
+                  {[
+                    { id: 'price', label: 'Price' },
+                    { id: 'time', label: 'Departure' },
+                    { id: 'rating', label: 'Rating' }
+                  ].map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => { haptics.light(); setSortBy(option.id as any); }}
+                      className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all border-none cursor-pointer ${
+                        sortBy === option.id 
+                          ? 'bg-slate-900 text-white shadow-sm font-extrabold' 
+                          : 'bg-white text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="space-y-2.5">
                 {loading ? (
                   <div className="space-y-2.5">
@@ -1134,7 +1174,7 @@ export function RidesView() {
                     ))}
                   </div>
                 ) : (
-                  mockDrivers.map((driver) => (
+                  sortedDrivers.map((driver) => (
                     <div 
                       key={driver.id}
                       className="p-4 bg-white rounded-3xl border border-slate-100 shadow-sm flex items-center justify-between transition-all hover:border-slate-200"

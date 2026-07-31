@@ -34,101 +34,22 @@ async function startServer() {
   app.get("/sw.js", (req, res) => {
     res.setHeader("Content-Type", "application/javascript");
     res.status(200).send(`
-      const CACHE_NAME = 'konnects-offline-cache-v1';
-      const STATIC_FILES = [
-        '/',
-        '/index.html',
-        '/src/main.tsx',
-        '/src/index.css'
-      ];
-
       self.addEventListener('install', (event) => {
-        event.waitUntil(
-          caches.open(CACHE_NAME).then((cache) => {
-            return cache.addAll(STATIC_FILES).catch(e => {
-              console.warn('Pre-cache warning: ', e);
-            });
-          })
-        );
         self.skipWaiting();
       });
 
       self.addEventListener('activate', (event) => {
         event.waitUntil(
           caches.keys().then((keys) => {
-            return Promise.all(
-              keys.map((k) => {
-                if (k !== CACHE_NAME) {
-                  return caches.delete(k);
-                }
-              })
-            );
-          })
-        );
-        self.clients.claim();
-      });
-
-      self.addEventListener('fetch', (event) => {
-        if (event.request.method !== 'GET' && event.request.method !== 'POST') return;
-        const url = new URL(event.request.url);
-
-        const isOfflineApi = url.pathname.startsWith('/api/offline/');
-
-        // Avoid caching external web sockets, firestore listeners, hot-module-reloader, EXCEPT our offline endpoints
-        if (!url.origin.includes(self.location.hostname) || (url.pathname.includes('/api/') && !isOfflineApi)) {
-          return;
-        }
-
-        // Intercept POST request and cache its JSON payload inside a virtual GET request
-        if (event.request.method === 'POST' && isOfflineApi) {
-          event.respondWith(
-            event.request.clone().json().then((body) => {
-              const response = new Response(JSON.stringify(body), {
-                headers: { 'Content-Type': 'application/json' }
-              });
-              return caches.open(CACHE_NAME).then((cache) => {
-                const getRequest = new Request(url.pathname, { method: 'GET' });
-                cache.put(getRequest, response.clone());
-                return response;
-              });
-            }).catch(() => {
-              return fetch(event.request);
-            })
-          );
-          return;
-        }
-
-        // Handle GET requests (including reading cache fallbacks for our offline API)
-        event.respondWith(
-          caches.match(event.request).then((cached) => {
-            if (cached) {
-              // Return cached response but refresh in the background when online
-              fetch(event.request).then((networkRes) => {
-                if (networkRes && networkRes.status === 200) {
-                  caches.open(CACHE_NAME).then((cache) => {
-                    cache.put(event.request, networkRes);
-                  });
-                }
-              }).catch(() => {});
-              return cached;
+            return Promise.all(keys.map((key) => caches.delete(key)));
+          }).then(() => {
+            return self.registration.unregister();
+          }).then(() => {
+            return self.clients.matchAll({ type: 'window' });
+          }).then((clients) => {
+            for (const client of clients) {
+              client.navigate(client.url);
             }
-
-            return fetch(event.request).then((networkRes) => {
-              if (networkRes && networkRes.status === 200) {
-                const copy = networkRes.clone();
-                caches.open(CACHE_NAME).then((cache) => {
-                  cache.put(event.request, copy);
-                });
-              }
-              return networkRes;
-            }).catch(() => {
-              // Return matching GET cache if offline
-              if (isOfflineApi) {
-                const getRequest = new Request(url.pathname, { method: 'GET' });
-                return caches.match(getRequest);
-              }
-              return caches.match('/');
-            });
           })
         );
       });

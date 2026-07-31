@@ -17,15 +17,17 @@ export function useProgressiveImage(src: string, options: UseProgressiveImageOpt
   } = options;
 
   const [currentSrc, setCurrentSrc] = useState(placeholder);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!!src);
+  const [prevSrc, setPrevSrc] = useState(src);
+
+  if (src !== prevSrc) {
+    setPrevSrc(src);
+    setCurrentSrc(placeholder);
+    setLoading(!!src);
+  }
 
   useEffect(() => {
-    // Reset state when source image changes
-    setCurrentSrc(placeholder);
-    setLoading(true);
-
     if (!src) {
-      setLoading(false);
       return;
     }
 

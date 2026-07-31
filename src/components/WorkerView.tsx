@@ -14,9 +14,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Check, X, Clock, MapPin, PoundSterling, Bell, MessageSquare, ToggleLeft, ToggleRight, Search, Settings, AlertCircle, User, Shield, Wrench, CreditCard, Users, ShieldCheck, TrendingUp, CheckCircle2, Star, Zap, Package, ArrowRight, Briefcase, ScanFace, FileText, Award, DollarSign, Calendar, Sparkles, Plus, Image } from 'lucide-react';
 import { VerificationStatus } from './VerificationStatus';
 import { WorkHistoryModule } from './WorkHistoryModule';
+import { AdminDashboard } from './AdminDashboard';
 
 export function WorkerView({ onChat, activeTab }: { onChat: (id: string, name: string) => void; activeTab?: string }) {
-  const { profile } = useAuth();
+  const { profile, toggleWorkerMode: authToggleWorkerMode, updateProfile } = useAuth();
   const [activeBookings, setActiveBookings] = useState<ServiceBooking[]>([]);
   const [activeRides, setActiveRides] = useState<RideRequest[]>([]);
   const [currentTime, setCurrentTime] = useState(() => Date.now());
@@ -87,7 +88,7 @@ export function WorkerView({ onChat, activeTab }: { onChat: (id: string, name: s
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
 
   // Subtabbing and Pro Toolkit states
-  const [subTab, setSubTab] = useState<'requests' | 'history' | 'bills' | 'toolkit' | 'crm' | 'earnings_tax'>('requests');
+  const [subTab, setSubTab] = useState<'requests' | 'history' | 'bills' | 'toolkit' | 'crm' | 'earnings_tax' | 'admin'>('requests');
   const [quoteDistance, setQuoteDistance] = useState<number>(5);
   const [quoteHours, setQuoteHours] = useState<number>(2);
   const [quoteIsFreeNear, setQuoteIsFreeNear] = useState<boolean>(false);
@@ -162,25 +163,19 @@ export function WorkerView({ onChat, activeTab }: { onChat: (id: string, name: s
   };
 
   const toggleWorkerMode = async () => {
-    if (!profile?.uid) return;
     try {
-      await updateDoc(doc(db, 'users', profile.uid), {
-        isWorkerMode: !profile.isWorkerMode
-      });
+      await authToggleWorkerMode();
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `users/${profile.uid}`);
+      console.warn('Worker mode toggle error:', error);
     }
   };
 
   const toggleOnlineStatus = async () => {
-    if (!profile?.uid) return;
     try {
-      await updateDoc(doc(db, 'users', profile.uid), {
-        isOnline: !profile.isOnline
-      });
+      await updateProfile({ isOnline: !profile?.isOnline });
       setShowConfirmOnline(false);
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `users/${profile.uid}`);
+      console.warn('Toggle online status error:', error);
     }
   };
 
@@ -317,7 +312,7 @@ export function WorkerView({ onChat, activeTab }: { onChat: (id: string, name: s
         setCrmRemindersList(items);
         crmRetryCount = 0;
       }, (err) => {
-        console.error("Failed to fetch CRM records", err);
+        console.warn("Unable to load CRM records", err);
         if (crmRetryCount < 3) {
           crmRetryCount++;
           crmRetryTimeout = setTimeout(subscribeCrm, 1500 * crmRetryCount);
@@ -339,7 +334,7 @@ export function WorkerView({ onChat, activeTab }: { onChat: (id: string, name: s
         setHmrcLogs(items);
         hmrcRetryCount = 0;
       }, (err) => {
-        console.error("Failed to fetch HMRC logs", err);
+        console.warn("Unable to load HMRC logs", err);
         if (hmrcRetryCount < 3) {
           hmrcRetryCount++;
           hmrcRetryTimeout = setTimeout(subscribeHmrc, 1500 * hmrcRetryCount);
@@ -729,9 +724,8 @@ export function WorkerView({ onChat, activeTab }: { onChat: (id: string, name: s
         clearInterval(interval);
         setOnboardProgress(100);
         try {
-          if (!profile?.uid) return;
-          await updateDoc(doc(db, 'users', profile.uid), {
-            workerType: prefJob,
+          await updateProfile({
+            workerType: prefJob as any,
             hourlyRate: Number(jobRate),
             verificationStatus: 'pending',
             verificationStep: 'Compliance Queue Check',
@@ -748,7 +742,7 @@ export function WorkerView({ onChat, activeTab }: { onChat: (id: string, name: s
               : [generalFile?.name]
           });
         } catch (error) {
-          handleFirestoreError(error, OperationType.UPDATE, `users/${profile?.uid}`);
+          console.warn('Worker onboard update notice:', error);
         } finally {
           setIsSubmittingOnboard(false);
         }
@@ -762,7 +756,16 @@ export function WorkerView({ onChat, activeTab }: { onChat: (id: string, name: s
             <span className="w-2.5 h-2.5 bg-indigo-500 rounded-full animate-ping" />
             <span className="text-[9px] font-black uppercase tracking-[0.2em] text-[#818cf8]">Pro Onboarding Hub</span>
           </div>
-          <span className="text-[10px] font-mono text-slate-500">STEP {onboardStep} OF 3</span>
+          <div className="flex items-center space-x-3">
+            <button
+              type="button"
+              onClick={() => updateProfile({ workerType: 'cleaner', isWorker: true, isWorkerMode: true })}
+              className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 underline cursor-pointer bg-transparent border-none"
+            >
+              Skip to Dashboard &rarr;
+            </button>
+            <span className="text-[10px] font-mono text-slate-500">STEP {onboardStep} OF 3</span>
+          </div>
         </header>
 
         {/* Form Body with sliding transitions */}
@@ -1501,7 +1504,7 @@ export function WorkerView({ onChat, activeTab }: { onChat: (id: string, name: s
       )}
 
       {/* DASHBOARD SUBTAB SWITCHER */}
-      <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mb-8 p-1 bg-slate-100 rounded-2xl border border-slate-200/50">
+      <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5 mb-8 p-1 bg-slate-100 rounded-2xl border border-slate-200/50">
         {[
           { id: 'requests', label: 'Orders' },
           { id: 'history', label: 'Work' },
@@ -1509,6 +1512,7 @@ export function WorkerView({ onChat, activeTab }: { onChat: (id: string, name: s
           { id: 'crm', label: 'CRM' },
           { id: 'earnings_tax', label: 'HMRC & Tax' },
           { id: 'toolkit', label: 'Toolkit' },
+          { id: 'admin', label: 'Admin 👑' }
         ].map(tab => (
           <button
             key={tab.id}
@@ -2508,6 +2512,12 @@ export function WorkerView({ onChat, activeTab }: { onChat: (id: string, name: s
               </div>
             )}
           </div>
+        </section>
+      )}
+
+      {subTab === 'admin' && (
+        <section className="mb-10 animate-fade-in text-left">
+          <AdminDashboard />
         </section>
       )}
 

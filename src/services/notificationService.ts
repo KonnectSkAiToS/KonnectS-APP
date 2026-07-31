@@ -101,7 +101,11 @@ export const addNotification = (
   saveNotifications([newItem, ...current]);
   
   // Also dispatch a browser native notification pop-up alert or simulated toast
-  window.dispatchEvent(new CustomEvent('urbanNet_new_notification', { detail: newItem }));
+  const isPushEnabled = localStorage.getItem('konnects_push_notifications_enabled') !== 'false';
+  const isRideOrChat = type === 'ride' || type === 'booking';
+  if (isPushEnabled || !isRideOrChat) {
+    window.dispatchEvent(new CustomEvent('urbanNet_new_notification', { detail: newItem }));
+  }
   return newItem;
 };
 

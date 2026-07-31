@@ -275,6 +275,7 @@ export function MarketplaceView() {
           description: newDesc
         })
       });
+      if (!response.ok) throw new Error('Failed to generate tags & summary');
       const data = await response.json();
       if (data.tags && Array.isArray(data.tags)) {
         setNewTags(data.tags);
@@ -334,6 +335,7 @@ export function MarketplaceView() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: `A high quality marketplace product photo of: ${newTitle}. ${newDesc}`, aspectRatio: "4:3" })
       });
+      if (!response.ok) throw new Error('Failed to generate image');
       const data = await response.json();
       if (data.imageUrl) {
         setNewImages(prev => [...prev, data.imageUrl]);
@@ -653,8 +655,25 @@ export function MarketplaceView() {
     );
   };
 
+  const staggerContainer = {
+    hidden: { opacity: 0 },
+    show: {
+      opacity: 1,
+      transition: {
+        staggerChildren: 0.04,
+        delayChildren: 0.05
+      }
+    }
+  };
+
   return (
-    <div className="pb-24 pt-6 px-4 max-w-md mx-auto min-h-screen">
+    <motion.div 
+      variants={staggerContainer}
+      initial="hidden"
+      animate="show"
+      exit="hidden"
+      className="pb-24 pt-6 px-4 max-w-md mx-auto min-h-screen"
+    >
       <AnimatePresence>
         {showQRScanner && (
           <QRScannerModal 
@@ -1575,7 +1594,7 @@ export function MarketplaceView() {
           }
         ]}
       />
-    </div>
+    </motion.div>
   );
 }
 

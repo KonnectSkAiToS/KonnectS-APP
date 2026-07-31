@@ -1,183 +1,44 @@
 /**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
-/**
- * Haptic Vibration Feedback Utility using the HTML5 Vibration API.
- * Ensures compatibility inside modern browsers and mobile device views.
+ * Haptic Vibration Feedback Utility using empty mocks to remove local haptics hardware calls.
+ * Safe for modern browsers, iframe previews, and headless testing.
  */
 export const haptics = {
-  /**
-   * Helper to check if haptics are globally enabled by the user.
-   */
-  isEnabled: () => {
-    if (typeof localStorage !== 'undefined') {
-      return localStorage.getItem('haptics_enabled') !== 'false';
-    }
-    return true;
-  },
-
-  /**
-   * Helper to check if haptics are enabled for successful bookings.
-   */
-  isBookingsEnabled: () => {
-    if (typeof localStorage !== 'undefined') {
-      return localStorage.getItem('haptics_bookings') !== 'false';
-    }
-    return true;
-  },
-
-  /**
-   * Helper to check if haptics are enabled for incoming ride updates.
-   */
-  isRidesEnabled: () => {
-    if (typeof localStorage !== 'undefined') {
-      return localStorage.getItem('haptics_rides') !== 'false';
-    }
-    return true;
-  },
-
-  /**
-   * Returns a multiplier for vibration duration based on user preference:
-   * 'subtle' => 0.5, 'medium' => 1.0, 'strong' => 1.8.
-   */
-  getIntensityMultiplier: () => {
-    if (typeof localStorage !== 'undefined') {
-      const sliderVal = localStorage.getItem('haptics_slider_intensity');
-      if (sliderVal !== null) {
-        return parseFloat(sliderVal);
-      }
-      const mode = localStorage.getItem('haptics_intensity') || 'medium';
-      if (mode === 'subtle') return 0.5;
-      if (mode === 'strong') return 1.8;
-    }
-    return 1.0;
-  },
-
-  /**
-   * Multiplies array of vibration pulses or single pulse duration by the intensity multiplier.
-   */
-  scale: (duration: number | number[]): number | number[] => {
-    const factor = haptics.getIntensityMultiplier();
-    if (Array.isArray(duration)) {
-      return duration.map((d, idx) => (idx % 2 === 0 ? Math.round(d * factor) : d));
-    }
-    return Math.round(duration * factor);
-  },
-
-  /**
-   * Short light tap for standard button clicks and small interaction elements.
-   */
+  isEnabled: () => false,
+  isBookingsEnabled: () => false,
+  isRidesEnabled: () => false,
+  getIntensityMultiplier: () => 1.0,
+  scale: (duration: number | number[]): number | number[] => duration,
   light: () => {
-    if (haptics.isEnabled() && typeof navigator !== 'undefined' && navigator.vibrate) {
-      navigator.vibrate(haptics.scale(15));
-    }
+    // console.log('[Haptics Mock] Light tap');
   },
-
-  /**
-   * General interaction event feedback.
-   */
   interaction: () => {
-    if (haptics.isEnabled() && typeof navigator !== 'undefined' && navigator.vibrate) {
-      navigator.vibrate(haptics.scale(25));
-    }
+    // console.log('[Haptics Mock] Interaction');
   },
-
-  /**
-   * Medium single pulse for intermediate alerts, checkpoints, or list selection.
-   */
   medium: () => {
-    if (haptics.isEnabled() && typeof navigator !== 'undefined' && navigator.vibrate) {
-      navigator.vibrate(haptics.scale(55));
-    }
+    // console.log('[Haptics Mock] Medium');
   },
-
-  /**
-   * Double pulse indicating success (general success triggers).
-   */
   success: () => {
-    if (haptics.isEnabled() && typeof navigator !== 'undefined' && navigator.vibrate) {
-      navigator.vibrate(haptics.scale([70, 35, 70]));
-    }
+    // console.log('[Haptics Mock] Success');
   },
-
-  /**
-   * Dedicated subtle pulse pattern for successful booking confirmation.
-   */
   bookingSuccess: () => {
-    if (haptics.isEnabled() && haptics.isBookingsEnabled() && typeof navigator !== 'undefined' && navigator.vibrate) {
-      // Shorter, softer success pulses
-      navigator.vibrate(haptics.scale([40, 25, 40, 25, 40]));
-    }
+    // console.log('[Haptics Mock] Booking Success');
   },
-
-  /**
-   * Dedicated vibration indicator for incoming ride actions / updates.
-   */
   rideUpdate: () => {
-    if (haptics.isEnabled() && haptics.isRidesEnabled() && typeof navigator !== 'undefined' && navigator.vibrate) {
-      // Oscillating notice for ride movements
-      navigator.vibrate(haptics.scale([30, 60, 30]));
-    }
+    // console.log('[Haptics Mock] Ride Update');
   },
-
-  /**
-   * Custom Ride Arrival vibration pattern responsive to settings.
-   */
   rideArrival: () => {
-    if (haptics.isEnabled() && typeof navigator !== 'undefined' && navigator.vibrate) {
-      const pattern = localStorage.getItem('haptics_ride_arrival_pattern') || 'long_pulse';
-      if (pattern === 'long_pulse') {
-        navigator.vibrate(haptics.scale(350));
-      } else if (pattern === 'short_buzz') {
-        navigator.vibrate(haptics.scale(40));
-      } else if (pattern === 'double_pulse') {
-        navigator.vibrate(haptics.scale([80, 40, 80]));
-      }
-    }
+    // console.log('[Haptics Mock] Ride Arrival');
   },
-
-  /**
-   * Custom Message Notification vibration pattern responsive to settings.
-   */
   messageNotification: () => {
-    if (haptics.isEnabled() && typeof navigator !== 'undefined' && navigator.vibrate) {
-      const pattern = localStorage.getItem('haptics_message_pattern') || 'short_buzz';
-      if (pattern === 'short_buzz') {
-        navigator.vibrate(haptics.scale(40));
-      } else if (pattern === 'double_pulse') {
-        navigator.vibrate(haptics.scale([60, 30, 60]));
-      } else if (pattern === 'long_pulse') {
-        navigator.vibrate(haptics.scale(250));
-      }
-    }
+    // console.log('[Haptics Mock] Message Notification');
   },
-
-  /**
-   * Quick distinct double hazard rhythm for error conditions.
-   */
   error: () => {
-    if (haptics.isEnabled() && typeof navigator !== 'undefined' && navigator.vibrate) {
-      navigator.vibrate(haptics.scale([120, 60, 120]));
-    }
+    // console.log('[Haptics Mock] Error');
   },
-
-  /**
-   * Single heavy vibration feedback for high-risk tactile warning screens (e.g. panic alarm).
-   */
   heavy: () => {
-    if (haptics.isEnabled() && typeof navigator !== 'undefined' && navigator.vibrate) {
-      navigator.vibrate(haptics.scale(180));
-    }
+    // console.log('[Haptics Mock] Heavy warning');
   },
-
-  /**
-   * Rhythm pulse feedback pattern indicating scanning, beacon, voice-cmd, or maps search radar.
-   */
   beacon: () => {
-    if (haptics.isEnabled() && typeof navigator !== 'undefined' && navigator.vibrate) {
-      navigator.vibrate(haptics.scale([90, 45, 90, 45, 120]));
-    }
+    // console.log('[Haptics Mock] Beacon rhythm');
   }
 };
