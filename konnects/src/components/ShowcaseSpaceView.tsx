@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Film, Image as ImageIcon, MessageSquareText, Plus, Search, 
   Sparkles, Filter, Heart, MessageSquare, Share2, Bookmark, 
   Eye, CheckCircle2, Star, Wrench, Clock, MapPin, DollarSign, 
-  Play, Camera, Video, Upload, ChevronRight, X, ArrowUpDown, 
+  Play, Pause, SkipForward, SkipBack, Camera, Video, Upload, ChevronRight, X, ArrowUpDown, 
   ShieldCheck, Send, ThumbsUp, HelpCircle, Lightbulb, Compass,
   Sliders, Trash2, ArrowRight
 } from 'lucide-react';
@@ -28,6 +28,19 @@ import { collection, addDoc, getDocs, doc, serverTimestamp, query, orderBy } fro
 interface ShowcaseSpaceViewProps {
   onChat?: (workerId: string, workerName: string) => void;
   initialSpace?: 'reels' | 'pics' | 'posts';
+}
+
+export interface ShowcaseStoryItem {
+  id: string;
+  type: 'create' | 'reel' | 'photo' | 'post';
+  title: string;
+  authorName: string;
+  authorRole?: string;
+  authorAvatar?: string;
+  tradeCategory?: string;
+  previewThumbnail?: string;
+  previewSubtitle?: string;
+  itemRef?: any;
 }
 
 const generateUniqueId = (prefix: string): string => {
@@ -99,6 +112,28 @@ export function ShowcaseSpaceView({ onChat, initialSpace = 'reels' }: ShowcaseSp
   });
   const [activeCommentPostId, setActiveCommentPostId] = useState<string | null>(null);
   const [newCommentText, setNewCommentText] = useState('');
+
+  // Visual Story Indicators & Long-press state
+  const [storyFilter, setStoryFilter] = useState<'all' | 'reel' | 'photo' | 'post'>('all');
+  const [longPressedStoryId, setLongPressedStoryId] = useState<string | null>(null);
+  const [previewStory, setPreviewStory] = useState<ShowcaseStoryItem | null>(null);
+  const longPressTimerRef = useRef<any>(null);
+  const pointerStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const isLongPressTriggeredRef = useRef<boolean>(false);
+
+  // Auto-advancing 5-second playback timer state
+  const [activeStoryId, setActiveStoryId] = useState<string | null>(null);
+  const [storyProgress, setStoryProgress] = useState<number>(0);
+  const [isStoryAutoPlaying, setIsStoryAutoPlaying] = useState<boolean>(true);
+  const isHoldingStoryRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    return () => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+      }
+    };
+  }, []);
 
   // Sync with Firestore if available
   useEffect(() => {
@@ -172,6 +207,223 @@ export function ShowcaseSpaceView({ onChat, initialSpace = 'reels' }: ShowcaseSp
       post.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()));
     return matchesTrade && matchesType && matchesSearch;
   });
+
+  // Combine Reels, Photos, and Posts into Story circles with preview thumbnails
+  const allStories: ShowcaseStoryItem[] = [
+    {
+      id: 'story_create_me',
+      type: 'create',
+      title: 'Share work or pro tip',
+      authorName: 'Your Story',
+      authorAvatar: profile?.avatarUrl,
+      previewSubtitle: 'Post reel, photo or tip'
+    },
+    ...reels.map((reel): ShowcaseStoryItem => ({
+      id: `story_reel_${reel.id}`,
+      type: 'reel',
+      title: reel.title,
+      authorName: reel.workerName.split(' ')[0],
+      authorRole: reel.workerRole,
+      authorAvatar: reel.workerAvatar,
+      tradeCategory: reel.tradeCategory,
+      previewThumbnail: reel.thumbnailUrl || reel.afterImageUrl || 'https://images.unsplash.com/photo-1585704032915-c3400ca199e7?q=80&w=800&auto=format&fit=crop',
+      previewSubtitle: `${reel.viewsCount} views · ${reel.tradeCategory}`,
+      itemRef: reel
+    })),
+    ...photos.map((photo): ShowcaseStoryItem => ({
+      id: `story_photo_${photo.id}`,
+      type: 'photo',
+      title: photo.title,
+      authorName: photo.workerName.split(' ')[0],
+      authorRole: photo.workerRole,
+      authorAvatar: photo.workerAvatar,
+      tradeCategory: photo.tradeCategory,
+      previewThumbnail: photo.afterImageUrl || photo.imageUrl,
+      previewSubtitle: `${photo.projectCost || '£150'} · ${photo.completionTime || '45m'}`,
+      itemRef: photo
+    })),
+    ...posts.map((post): ShowcaseStoryItem => ({
+      id: `story_post_${post.id}`,
+      type: 'post',
+      title: post.title || post.content.slice(0, 45),
+      authorName: post.authorName.split(' ')[0],
+      authorRole: post.authorRole,
+      authorAvatar: post.authorAvatar,
+      tradeCategory: post.tradeCategory,
+      previewThumbnail: post.images?.[0] || post.afterImage || undefined,
+      previewSubtitle: `${post.postType.toUpperCase()} · ${post.commentsCount || 0} replies`,
+      itemRef: post
+    }))
+  ];
+
+  const displayedStories = allStories.filter(story => {
+    if (story.type === 'create') return true;
+    if (storyFilter === 'all') return true;
+    return story.type === storyFilter;
+  });
+
+  const playableStories = displayedStories.filter(s => s.type !== 'create');
+  const currentActiveStoryId = (activeStoryId && playableStories.some(s => s.id === activeStoryId))
+    ? activeStoryId
+    : playableStories[0]?.id || null;
+
+  // Skip to next story automatically or manually
+  const skipToNextStory = useCallback(() => {
+    const playable = displayedStories.filter(s => s.type !== 'create');
+    if (playable.length === 0) return;
+
+    const currentIndex = playable.findIndex(s => s.id === currentActiveStoryId);
+    const nextIndex = currentIndex >= 0 && currentIndex < playable.length - 1 ? currentIndex + 1 : 0;
+    const nextStory = playable[nextIndex];
+
+    if (nextStory) {
+      haptics.light();
+      setActiveStoryId(nextStory.id);
+      setStoryProgress(0);
+
+      // Smoothly scroll the story circle into view in the carousel
+      const storyEl = document.getElementById(`story-circle-${nextStory.id}`);
+      if (storyEl) {
+        storyEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      }
+    }
+  }, [displayedStories, currentActiveStoryId]);
+
+  // Skip to previous story
+  const skipToPrevStory = useCallback(() => {
+    const playable = displayedStories.filter(s => s.type !== 'create');
+    if (playable.length === 0) return;
+
+    const currentIndex = playable.findIndex(s => s.id === currentActiveStoryId);
+    const prevIndex = currentIndex > 0 ? currentIndex - 1 : playable.length - 1;
+    const prevStory = playable[prevIndex];
+
+    if (prevStory) {
+      haptics.light();
+      setActiveStoryId(prevStory.id);
+      setStoryProgress(0);
+
+      const storyEl = document.getElementById(`story-circle-${prevStory.id}`);
+      if (storyEl) {
+        storyEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      }
+    }
+  }, [displayedStories, currentActiveStoryId]);
+
+  // Auto-advancing 5-second playback timer bar logic
+  useEffect(() => {
+    if (!isStoryAutoPlaying || !currentActiveStoryId) return;
+
+    const DURATION = 5000; // 5 seconds
+    const INTERVAL = 50;   // Update every 50ms for smooth progress animation
+    const step = (INTERVAL / DURATION) * 100;
+
+    const timer = setInterval(() => {
+      // Pause progress while user is holding or previewing
+      if (isHoldingStoryRef.current || longPressedStoryId) {
+        return;
+      }
+
+      setStoryProgress(prev => {
+        if (prev + step >= 100) {
+          skipToNextStory();
+          return 0;
+        }
+        return prev + step;
+      });
+    }, INTERVAL);
+
+    return () => clearInterval(timer);
+  }, [isStoryAutoPlaying, currentActiveStoryId, skipToNextStory, longPressedStoryId]);
+
+  const handlePointerDownStory = (story: ShowcaseStoryItem, e: React.PointerEvent) => {
+    if (story.type === 'create') return;
+    pointerStartPosRef.current = { x: e.clientX, y: e.clientY };
+    isLongPressTriggeredRef.current = false;
+    isHoldingStoryRef.current = true; // Pause 5s timer during hold
+
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+    }
+
+    longPressTimerRef.current = setTimeout(() => {
+      isLongPressTriggeredRef.current = true;
+      haptics.medium();
+      setLongPressedStoryId(story.id);
+      setPreviewStory(story);
+    }, 280);
+  };
+
+  const handlePointerMoveStory = (e: React.PointerEvent) => {
+    if (!pointerStartPosRef.current) return;
+    const deltaX = Math.abs(e.clientX - pointerStartPosRef.current.x);
+    const deltaY = Math.abs(e.clientY - pointerStartPosRef.current.y);
+    if (deltaX > 8 || deltaY > 8) {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+    }
+  };
+
+  const handlePointerUpStory = (story: ShowcaseStoryItem) => {
+    isHoldingStoryRef.current = false; // Resume 5s timer
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    pointerStartPosRef.current = null;
+
+    if (isLongPressTriggeredRef.current) {
+      setLongPressedStoryId(null);
+      setPreviewStory(null);
+      isLongPressTriggeredRef.current = false;
+    } else {
+      handleStoryClick(story);
+    }
+  };
+
+  const handlePointerCancelStory = () => {
+    isHoldingStoryRef.current = false; // Resume 5s timer
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    pointerStartPosRef.current = null;
+    setLongPressedStoryId(null);
+    setPreviewStory(null);
+    isLongPressTriggeredRef.current = false;
+  };
+
+  const handleStoryClick = (story: ShowcaseStoryItem) => {
+    haptics.light();
+    if (story.type === 'create') {
+      setCreateType(activeSpace === 'reels' ? 'reel' : activeSpace === 'pics' ? 'photo' : 'post');
+      setShowCreateModal(true);
+      return;
+    }
+
+    // Set this clicked story as the active auto-advancing story
+    setActiveStoryId(story.id);
+    setStoryProgress(0);
+
+    if (story.type === 'reel') {
+      const idx = reels.findIndex(r => r.id === story.itemRef?.id);
+      setActiveViewerIndex(idx >= 0 ? idx : 0);
+      return;
+    }
+    if (story.type === 'photo') {
+      setActivePhotoLightbox(story.itemRef);
+      return;
+    }
+    if (story.type === 'post') {
+      setActiveSpace('posts');
+      if (story.itemRef?.title) {
+        setSearchQuery(story.itemRef.title);
+      }
+      return;
+    }
+  };
 
   // Handle Likes for Posts
   const handleToggleLikePost = (postId: string) => {
@@ -493,6 +745,376 @@ export function ShowcaseSpaceView({ onChat, initialSpace = 'reels' }: ShowcaseSp
             <span>+ Create</span>
           </button>
         </div>
+
+        {/* =========================================================================
+            VISUAL STORY INDICATORS (Circles at top of feed for Reels, Photos & Posts)
+            ========================================================================= */}
+        <div className="mb-4 bg-white/70 dark:bg-slate-900/60 p-3 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 shadow-2xs backdrop-blur-sm">
+          {/* Stories Header & Type Filter + Auto-Advancing Timer Controls */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1 mb-2.5">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-black uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                Craft Stories
+              </span>
+              <span className="text-[10px] text-slate-400 font-semibold hidden sm:inline">
+                · Auto-advancing (5s)
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between sm:justify-end gap-2 flex-wrap">
+              {/* Playback Progress Controller */}
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 px-1.5 py-0.5 rounded-lg border border-slate-200/60 dark:border-slate-700/60">
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptics.light();
+                    setIsStoryAutoPlaying(prev => !prev);
+                  }}
+                  className={`px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer ${
+                    isStoryAutoPlaying
+                      ? 'text-indigo-600 dark:text-indigo-400 font-black'
+                      : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
+                  }`}
+                  title={isStoryAutoPlaying ? 'Pause 5s auto-skip' : 'Resume 5s auto-skip'}
+                >
+                  {isStoryAutoPlaying ? <Pause size={9} /> : <Play size={9} />}
+                  <span>{isStoryAutoPlaying ? `${Math.max(1, 5 - Math.floor((storyProgress / 100) * 5))}s` : 'Paused'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={skipToPrevStory}
+                  className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer"
+                  title="Previous story"
+                >
+                  <SkipBack size={10} />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={skipToNextStory}
+                  className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer"
+                  title="Skip to next story"
+                >
+                  <SkipForward size={10} />
+                </button>
+              </div>
+
+              {/* Stories Type Filter Pills */}
+              <div className="flex items-center gap-1 text-[10px] font-bold">
+                <button
+                  type="button"
+                  onClick={() => { haptics.light(); setStoryFilter('all'); }}
+                  className={`px-2 py-0.5 rounded-lg transition-all cursor-pointer ${
+                    storyFilter === 'all'
+                      ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-2xs'
+                      : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
+                  }`}
+                >
+                  All ({allStories.length - 1})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { haptics.light(); setStoryFilter('reel'); }}
+                  className={`px-2 py-0.5 rounded-lg transition-all flex items-center gap-1 cursor-pointer ${
+                    storyFilter === 'reel'
+                      ? 'bg-rose-500 text-white shadow-2xs'
+                      : 'text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40'
+                  }`}
+                >
+                  <Film size={10} />
+                  <span>Reels</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { haptics.light(); setStoryFilter('photo'); }}
+                  className={`px-2 py-0.5 rounded-lg transition-all flex items-center gap-1 cursor-pointer ${
+                    storyFilter === 'photo'
+                      ? 'bg-emerald-600 text-white shadow-2xs'
+                      : 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40'
+                  }`}
+                >
+                  <Camera size={10} />
+                  <span>Pics</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { haptics.light(); setStoryFilter('post'); }}
+                  className={`px-2 py-0.5 rounded-lg transition-all flex items-center gap-1 cursor-pointer ${
+                    storyFilter === 'post'
+                      ? 'bg-indigo-600 text-white shadow-2xs'
+                      : 'text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40'
+                  }`}
+                >
+                  <MessageSquareText size={10} />
+                  <span>Posts</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Horizontal Scrollable Carousel of Story Circles */}
+          <div className="flex items-center gap-3 overflow-x-auto no-scrollbar py-1 px-1 -mx-1 select-none">
+            {displayedStories.map((story) => {
+              const isLongPressed = longPressedStoryId === story.id;
+              const isCreate = story.type === 'create';
+              const isActiveStory = currentActiveStoryId === story.id && !isCreate;
+
+              return (
+                <div
+                  key={story.id}
+                  id={`story-circle-${story.id}`}
+                  className="flex flex-col items-center flex-shrink-0 cursor-pointer group relative"
+                  onPointerDown={(e) => handlePointerDownStory(story, e)}
+                  onPointerMove={handlePointerMoveStory}
+                  onPointerUp={() => handlePointerUpStory(story)}
+                  onPointerCancel={handlePointerCancelStory}
+                  onPointerLeave={handlePointerCancelStory}
+                  title={isCreate ? 'Upload work or write post' : `${story.title} (Hold to pause and inspect)`}
+                >
+                  {/* Circular Indicator with Type Gradient Border & Active Ring */}
+                  <div className="relative">
+                    <motion.div
+                      animate={isLongPressed ? { scale: 1.12 } : isActiveStory ? { scale: 1.05 } : { scale: 1 }}
+                      transition={{ type: 'spring', stiffness: 450, damping: 25 }}
+                      className={`w-[66px] h-[66px] rounded-full p-[2.5px] transition-all flex items-center justify-center relative ${
+                        isCreate
+                          ? 'border-2 border-dashed border-indigo-400 dark:border-indigo-500 bg-indigo-50/60 dark:bg-indigo-950/40'
+                          : story.type === 'reel'
+                          ? 'bg-gradient-to-tr from-rose-500 via-fuchsia-500 to-amber-400 shadow-sm shadow-rose-500/25'
+                          : story.type === 'photo'
+                          ? 'bg-gradient-to-tr from-emerald-400 via-teal-500 to-cyan-500 shadow-sm shadow-emerald-500/25'
+                          : 'bg-gradient-to-tr from-indigo-500 via-blue-500 to-sky-400 shadow-sm shadow-indigo-500/25'
+                      } ${isActiveStory ? 'ring-3 ring-indigo-500/70 shadow-lg' : ''} ${isLongPressed ? 'ring-4 ring-indigo-400' : ''}`}
+                    >
+                      {/* Perimeter Circular SVG Progress Ring for Active Story */}
+                      {isActiveStory && (
+                        <svg 
+                          className="absolute inset-0 w-full h-full -rotate-90 pointer-events-none z-20" 
+                          viewBox="0 0 66 66"
+                        >
+                          <circle
+                            cx="33"
+                            cy="33"
+                            r="30.5"
+                            fill="none"
+                            stroke="rgba(255, 255, 255, 0.3)"
+                            strokeWidth="2.5"
+                          />
+                          <circle
+                            cx="33"
+                            cy="33"
+                            r="30.5"
+                            fill="none"
+                            stroke="#ffffff"
+                            strokeWidth="2.5"
+                            strokeDasharray={2 * Math.PI * 30.5}
+                            strokeDashoffset={2 * Math.PI * 30.5 * (1 - storyProgress / 100)}
+                            strokeLinecap="round"
+                            className="transition-all duration-75 ease-linear shadow-[0_0_6px_#fff]"
+                          />
+                        </svg>
+                      )}
+
+                      {/* Inner Circle displaying Avatar by default, or Preview Thumbnail when Long-Pressed */}
+                      <div className="relative w-full h-full rounded-full overflow-hidden bg-white dark:bg-slate-900 border-2 border-white dark:border-slate-950 flex items-center justify-center shadow-inner">
+                        {isLongPressed && story.previewThumbnail ? (
+                          <motion.div
+                            initial={{ opacity: 0, scale: 0.8 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            className="w-full h-full relative"
+                          >
+                            <img
+                              src={story.previewThumbnail}
+                              alt={story.title}
+                              className="w-full h-full object-cover"
+                            />
+                            {story.type === 'reel' && (
+                              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                                <Play size={16} fill="white" className="text-white ml-0.5" />
+                              </div>
+                            )}
+                          </motion.div>
+                        ) : isLongPressed && story.type === 'post' && !story.previewThumbnail ? (
+                          <motion.div
+                            initial={{ opacity: 0, scale: 0.8 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            className="w-full h-full bg-gradient-to-br from-indigo-600 to-sky-600 p-1 flex items-center justify-center text-center"
+                          >
+                            <span className="text-[7px] text-white font-black line-clamp-3 leading-tight px-0.5">
+                              {story.title}
+                            </span>
+                          </motion.div>
+                        ) : (
+                          <img
+                            src={story.authorAvatar || 'https://images.unsplash.com/photo-1560250097-0b93528c311a?q=80&w=256&auto=format&fit=crop'}
+                            alt={story.authorName}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          />
+                        )}
+
+                        {/* Auto-advancing linear timer bar INSIDE the active story indicator circle */}
+                        {isActiveStory && (
+                          <div className="absolute bottom-1.5 left-2 right-2 z-30 pointer-events-none">
+                            <div className="w-full h-1 bg-black/70 backdrop-blur-xs rounded-full overflow-hidden p-[0.5px] border border-white/40 shadow-xs">
+                              <div 
+                                className="h-full bg-white rounded-full transition-all duration-75 ease-linear shadow-[0_0_6px_rgba(255,255,255,1)]"
+                                style={{ width: `${storyProgress}%` }}
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+
+                    {/* Type Glyph Badge at Bottom Right of Circle */}
+                    <div className={`absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full flex items-center justify-center text-white border-2 border-white dark:border-slate-900 shadow-xs z-30 ${
+                      isCreate
+                        ? 'bg-indigo-600'
+                        : story.type === 'reel'
+                        ? 'bg-rose-500'
+                        : story.type === 'photo'
+                        ? 'bg-emerald-600'
+                        : 'bg-indigo-600'
+                    }`}>
+                      {isCreate && <Plus size={11} strokeWidth={3} />}
+                      {story.type === 'reel' && <Film size={10} />}
+                      {story.type === 'photo' && <Camera size={10} />}
+                      {story.type === 'post' && <MessageSquareText size={10} />}
+                    </div>
+                  </div>
+
+                  {/* Author Name & Content Type Label */}
+                  <span className={`text-[10px] truncate max-w-[66px] mt-1 text-center leading-tight ${
+                    isActiveStory ? 'font-black text-indigo-600 dark:text-indigo-400' : 'font-bold text-slate-700 dark:text-slate-300'
+                  }`}>
+                    {story.authorName}
+                  </span>
+                  <span className={`text-[8px] font-black uppercase tracking-wider ${
+                    isActiveStory
+                      ? 'text-indigo-600 dark:text-indigo-400 font-extrabold'
+                      : isCreate
+                      ? 'text-indigo-500'
+                      : story.type === 'reel'
+                      ? 'text-rose-500'
+                      : story.type === 'photo'
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : 'text-indigo-600 dark:text-indigo-400'
+                  }`}>
+                    {isActiveStory ? `Playing (${Math.max(1, 5 - Math.floor((storyProgress / 100) * 5))}s)` : isCreate ? 'Add' : story.type}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Floating Long-Press Story Preview Card Popover */}
+        <AnimatePresence>
+          {previewStory && (
+            <div className="fixed inset-0 z-50 pointer-events-none flex items-center justify-center p-4 bg-black/45 backdrop-blur-xs">
+              <motion.div
+                initial={{ scale: 0.85, opacity: 0, y: 15 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.85, opacity: 0, y: 15 }}
+                transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+                className="max-w-xs w-full bg-white dark:bg-slate-900 rounded-3xl overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 pointer-events-auto"
+              >
+                {/* Story Type Header Banner */}
+                <div className={`p-3 flex items-center justify-between text-white ${
+                  previewStory.type === 'reel'
+                    ? 'bg-gradient-to-r from-pink-600 to-rose-600'
+                    : previewStory.type === 'photo'
+                    ? 'bg-gradient-to-r from-emerald-600 to-teal-600'
+                    : 'bg-gradient-to-r from-indigo-600 to-blue-600'
+                }`}>
+                  <div className="flex items-center gap-1.5">
+                    {previewStory.type === 'reel' && <Film size={14} />}
+                    {previewStory.type === 'photo' && <Camera size={14} />}
+                    {previewStory.type === 'post' && <MessageSquareText size={14} />}
+                    <span className="text-[10px] font-black uppercase tracking-wider">
+                      {previewStory.type === 'reel' ? 'Active Reel Story' : previewStory.type === 'photo' ? 'Work Evidence Photo' : 'Tradesman Post Story'}
+                    </span>
+                  </div>
+                  {previewStory.tradeCategory && (
+                    <span className="text-[10px] opacity-85 font-extrabold capitalize">
+                      {previewStory.tradeCategory}
+                    </span>
+                  )}
+                </div>
+
+                {/* Thumbnail Preview Area */}
+                <div className="relative aspect-video bg-slate-950 overflow-hidden">
+                  {previewStory.previewThumbnail ? (
+                    <img
+                      src={previewStory.previewThumbnail}
+                      alt={previewStory.title}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full p-4 flex flex-col justify-center bg-slate-900 text-slate-100">
+                      <p className="text-xs font-semibold line-clamp-3 leading-relaxed">
+                        "{previewStory.title}"
+                      </p>
+                    </div>
+                  )}
+                  {previewStory.type === 'reel' && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/25">
+                      <div className="w-10 h-10 rounded-full bg-white/30 backdrop-blur-md flex items-center justify-center text-white shadow-lg">
+                        <Play size={18} fill="currentColor" className="ml-0.5" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Details & Author */}
+                <div className="p-3.5 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <img
+                      src={previewStory.authorAvatar || 'https://images.unsplash.com/photo-1560250097-0b93528c311a?q=80&w=256&auto=format&fit=crop'}
+                      alt={previewStory.authorName}
+                      className="w-6 h-6 rounded-full object-cover"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <h5 className="text-xs font-black text-slate-900 dark:text-white truncate">
+                        {previewStory.authorName}
+                      </h5>
+                      <p className="text-[10px] text-slate-400 font-semibold truncate">
+                        {previewStory.authorRole || previewStory.tradeCategory}
+                      </p>
+                    </div>
+                  </div>
+
+                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-100 leading-snug line-clamp-2">
+                    {previewStory.title}
+                  </h4>
+
+                  {previewStory.previewSubtitle && (
+                    <p className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400">
+                      {previewStory.previewSubtitle}
+                    </p>
+                  )}
+
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[10px] text-slate-400 font-semibold">
+                    <span>Release to dismiss</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const storyToOpen = previewStory;
+                        setPreviewStory(null);
+                        setLongPressedStoryId(null);
+                        handleStoryClick(storyToOpen);
+                      }}
+                      className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline cursor-pointer"
+                    >
+                      Open Full &rarr;
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
 
         {/* The 3 Dedicated Primary Spaces Switcher (Reels / Pics / Post Area) with Fluid Motion Pill */}
         <div className="relative bg-slate-200/70 dark:bg-slate-900/90 p-1 rounded-2xl flex items-center shadow-inner border border-slate-300/50 dark:border-slate-800 mb-4 select-none">
