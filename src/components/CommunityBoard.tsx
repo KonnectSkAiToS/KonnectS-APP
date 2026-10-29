@@ -4,35 +4,17 @@
  */
 
 import { useState, useEffect } from 'react';
+import { useDiscussions } from '../features/community/hooks/useCommunity';
+import type { Reply, ThreadItem } from '../features/community/types';
 import { MessageSquare, Pin, Send, Plus, X, Search, Heart, User, Filter, HelpCircle, Shield, AlertTriangle } from 'lucide-react';
-import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, doc, arrayUnion, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, doc, arrayUnion, serverTimestamp } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
 
-interface Reply {
-  id: string;
-  authorName: string;
-  authorId: string;
-  text: string;
-  createdAt: string;
-}
-
-interface ThreadItem {
-  id: string;
-  title: string;
-  content: string;
-  category: 'help' | 'general' | 'deals' | 'lost';
-  authorName: string;
-  authorId: string;
-  reactions: number;
-  replies: Reply[];
-  createdAt: any;
-}
-
 export function CommunityBoard() {
   const { user, profile } = useAuth();
-  const [threads, setThreads] = useState<ThreadItem[]>([]);
+  const { data: threads } = useDiscussions();
   const [selectedThread, setSelectedThread] = useState<ThreadItem | null>(null);
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -47,24 +29,10 @@ export function CommunityBoard() {
   const [replyText, setReplyText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Load threads in real-time
+  // Keep the open thread in sync with live updates
   useEffect(() => {
-    const q = query(collection(db, 'discussions'), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as ThreadItem));
-      setThreads(items);
-      
-      // Update selected thread if it changes in database
-      if (selectedThread) {
-        const updated = items.find(t => t.id === selectedThread.id);
-        if (updated) setSelectedThread(updated);
-      }
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'discussions');
-    });
-
-    return () => unsubscribe();
-  }, [selectedThread?.id]);
+    setSelectedThread(cur => (cur ? threads.find(t => t.id === cur.id) ?? cur : cur));
+  }, [threads]);
 
   const handlePostThread = async (e: React.FormEvent) => {
     e.preventDefault();
