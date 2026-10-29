@@ -8,6 +8,7 @@ import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { MarketplaceItem, ItemStatus, UserProfile, ItemCondition } from '../types';
 import { haptics } from '../utils/haptics';
+import { uploadListingImage } from '../features/marketplace/api/uploadListingImage';
 
 import { MarketplaceItemCard } from './MarketplaceItemCard';
 
@@ -365,7 +366,8 @@ export function MarketplaceView() {
       if (!response.ok) throw new Error('Failed to generate image');
       const data = await response.json();
       if (data.imageUrl) {
-        setNewImages(prev => [...prev, data.imageUrl]);
+        const url = data.imageUrl.startsWith('data:') ? await uploadListingImage(data.imageUrl) : data.imageUrl;
+        setNewImages(prev => [...prev, url]);
       } else if (data.error) {
         alert("Image Gen Error: " + data.error);
       }
@@ -582,15 +584,28 @@ export function MarketplaceView() {
     return 0;
   });
 
-  const handleUpdateImages = async (itemId: string) => {
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const photoItemId = useRef<string | null>(null);
+
+  const handleUpdateImages = (itemId: string) => {
+    photoItemId.current = itemId;
+    photoInputRef.current?.click();
+  };
+
+  const handlePhotoPicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    const itemId = photoItemId.current;
+    e.target.value = '';
+    if (!file || !itemId) return;
     setUploadingItem(itemId);
     try {
-      const mockImageUrl = `https://picsum.photos/seed/${itemId}/600/400`;
+      const url = await uploadListingImage(file);
       await updateDoc(doc(db, 'items', itemId), {
-        images: arrayUnion(mockImageUrl)
+        images: arrayUnion(url)
       });
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `items/${itemId}`);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `items/${itemId}`);
+      alert(err instanceof Error ? err.message : 'Photo upload failed');
     } finally {
       setUploadingItem(null);
     }
@@ -1394,6 +1409,7 @@ export function MarketplaceView() {
         onSubmit={handleMakeOffer}
       />
 
+      <input ref={photoInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoPicked} />
       <CreateListingModal 
         show={showCreateModal}
         onClose={() => setShowCreateModal(false)}
@@ -1634,14 +1650,20 @@ function CreateListingModal({
 }: any) {
   if (!show) return null;
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const [uploading, setUploading] = useState(false);
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImages((prev: string[]) => [...prev, reader.result as string]);
-      };
-      reader.readAsDataURL(file);
+    e.target.value = '';
+    if (!file) return;
+    setUploading(true);
+    try {
+      const url = await uploadListingImage(file);
+      setImages((prev: string[]) => [...prev, url]);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Photo upload failed');
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -1704,8 +1726,8 @@ function CreateListingModal({
                 </div>
               ))}
               <label className="aspect-square border-2 border-dashed border-slate-200 rounded-3xl flex items-center justify-center text-slate-300 cursor-pointer hover:bg-slate-50 transition-all hover:border-brand/40 group">
-                 <Plus size={32} className="group-hover:scale-110 transition-transform" />
-                 <input type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
+                 {uploading ? <span className="text-[10px] font-black uppercase tracking-widest">Uploading…</span> : <Plus size={32} className="group-hover:scale-110 transition-transform" />}
+                 <input type="file" className="hidden" accept="image/*" disabled={uploading} onChange={handleFileChange} />
               </label>
            </div>
 
