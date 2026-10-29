@@ -5,16 +5,21 @@
 
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, getDocFromServer } from 'firebase/firestore';
+import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 // Offline cache lives in IndexedDB, so feeds keep working offline and snapshots report metadata.fromCache.
-export const db = initializeFirestore(
-  app,
-  { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) },
-  (firebaseConfig as any).firestoreDatabaseId,
-);
+const databaseId = (firebaseConfig as any).firestoreDatabaseId;
+function createDb() {
+  try {
+    return initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) }, databaseId);
+  } catch {
+    // Module re-evaluated (HMR) after Firestore was already initialised: reuse that instance.
+    return getFirestore(app, databaseId);
+  }
+}
+export const db = createDb();
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 export { firebaseConfig };
