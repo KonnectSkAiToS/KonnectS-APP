@@ -446,19 +446,6 @@ export function MarketplaceView() {
 
   useEffect(() => {
     let active = true;
-    // Lead with instantaneous offline persistence fallback
-    const cached = localStorage.getItem('konnects_offline_marketplace_' + tab);
-    if (cached) {
-      try {
-        const parsed = JSON.parse(cached);
-        Promise.resolve().then(() => {
-          if (active) setItems(parsed);
-        });
-      } catch (e) {
-        console.warn('Stale offline cache.', e);
-      }
-    }
-
     let q = query(collection(db, 'items'), orderBy('createdAt', 'desc'));
 
     if (tab === 'browse' || tab === 'cart') {
@@ -490,7 +477,6 @@ export function MarketplaceView() {
 
       if (active) {
         setItems(fetchedItems);
-        localStorage.setItem('konnects_offline_marketplace_' + tab, JSON.stringify(fetchedItems));
         setLoading(false);
       }
 
@@ -506,14 +492,7 @@ export function MarketplaceView() {
       }
       if (active) setSellerProfiles(newProfiles);
     }, (err) => {
-      console.warn('Network snapshot active listener failed, defaulting to persistent offline cache.', err);
-      const fallbackCached = localStorage.getItem('konnects_offline_marketplace_' + tab);
-      if (fallbackCached) {
-        try {
-          const parsed = JSON.parse(fallbackCached);
-          if (active) setItems(parsed);
-        } catch (_) {}
-      }
+      handleFirestoreError(err, OperationType.LIST, 'items');
       if (active) setLoading(false);
     });
 

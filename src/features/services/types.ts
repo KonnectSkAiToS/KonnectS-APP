@@ -8,6 +8,8 @@ export interface Worker {
   price: number;
   status: 'available' | 'busy';
   category: string;
+  verified: boolean;
+  lat?: number;
+  lng?: number;
   bio?: string;
-  isDynamic?: boolean;
 }

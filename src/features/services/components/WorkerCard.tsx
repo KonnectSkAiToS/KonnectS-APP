@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Briefcase, Clock, MapPin, MessageSquare, Sparkles, Star, Zap } from 'lucide-react';
+import { Briefcase, Clock, MapPin, MessageSquare, Star, Zap } from 'lucide-react';
 import type { Worker } from '../types';
 
 interface WorkerCardProps {
@@ -28,13 +28,6 @@ export function WorkerCard({ pro, index, requestDisabled, onRequest, onChat, onQ
       }}
       className="p-5 bg-white rounded-3xl border border-slate-100 shadow-sm hover:shadow-md transition-all duration-300 flex items-start space-x-4 relative group"
     >
-    {pro.isDynamic && (
-      <span className="absolute top-3 right-3 bg-indigo-600/10 text-indigo-600 text-[7px] font-mono font-black px-1.5 py-0.5 rounded uppercase tracking-wider flex items-center space-x-0.5">
-        <Sparkles size={8} />
-        <span>Exact AI Match</span>
-      </span>
-    )}
-    
     <div className="w-12 h-12 bg-slate-50 border border-slate-100 rounded-2xl flex-shrink-0 flex items-center justify-center text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors">
       <Briefcase size={22} />
     </div>

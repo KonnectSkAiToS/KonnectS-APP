@@ -15,6 +15,9 @@ const toWorker = (u: UserProfile): Worker => ({
   price: u.hourlyRate ?? 0,
   status: u.availabilityStatus === 'Busy' ? 'busy' : 'available',
   category: '', // sector is assigned by the caller (ServicesView owns the role -> sector map)
+  verified: u.verificationStatus === 'verified',
+  lat: u.location?.lat,
+  lng: u.location?.lng,
   bio: u.bio,
 });
 
