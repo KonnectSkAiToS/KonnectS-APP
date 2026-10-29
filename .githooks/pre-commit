@@ -1,0 +1,3 @@
+#!/bin/sh
+# Block commits while high/critical npm vulnerabilities exist. Fix with `npm audit fix` (or an override).
+npm audit --audit-level=high || { echo "pre-commit: high/critical vulnerabilities found, fix before committing." >&2; exit 1; }
