@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import { Heart, Gift, Package, ArrowRight, ShieldCheck, Check } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { VolunteerHoursCard } from '../features/community';
 
 export function CharityView({ onBack }: { onBack: () => void }) {
   const [step, setStep] = useState(1);
@@ -75,6 +76,8 @@ export function CharityView({ onBack }: { onBack: () => void }) {
            </div>
         </div>
       </div>
+
+      <VolunteerHoursCard charities={charities.map(c => c.name)} />
 
       <div className="mt-10 p-4 bg-slate-900 rounded-2xl text-white flex items-center justify-between">
          <div className="flex items-center space-x-3">
