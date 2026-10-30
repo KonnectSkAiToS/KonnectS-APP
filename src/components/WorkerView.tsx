@@ -478,6 +478,8 @@ export function WorkerView({ onChat, activeTab }: { onChat: (id: string, name: s
       } catch (err) {
         console.error("Premium upgrade error:", err);
         setIsUpgradingPremium(false);
+        // Premium status is a trust/billing field: it can only be granted by the server after a verified payment.
+        alert("Premium upgrades require a verified payment and are not available yet.");
       }
     }, 1800);
   };  const handleDownloadTaxSummary = () => {
@@ -1479,7 +1481,7 @@ export function WorkerView({ onChat, activeTab }: { onChat: (id: string, name: s
       </section>
 
       {/* BACKEND COMPLIANCE SIMULATION BADGE */}
-      {profile?.verificationStatus === 'pending' && (
+      {(import.meta as any).env?.DEV && profile?.verificationStatus === 'pending' && (
         <div className="mb-6 p-5 bg-[#fff7ed] border border-orange-200 rounded-[32px] flex flex-col space-y-2 text-slate-800 shadow-sm">
           <div className="flex items-center space-x-2">
             <span className="w-2 h-2 bg-orange-500 rounded-full animate-ping" />

@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { auth } from './firebase';
 
 // Safe environment helpers
 const safeGetItem = (key: string): string | null => {
@@ -38,7 +39,11 @@ export function initializeSupabaseClient() {
 
   if (supabaseUrl && supabaseAnonKey && supabaseAnonKey.trim() !== '') {
     try {
-      supabase = createClient(supabaseUrl, supabaseAnonKey);
+      // Authenticate to Supabase with the signed-in user's Firebase ID token (Supabase Third-Party Auth).
+      // No separate Supabase password exists, and row-level security keys off the token's `sub` claim.
+      supabase = createClient(supabaseUrl, supabaseAnonKey, {
+        accessToken: async () => (await auth.currentUser?.getIdToken()) ?? null,
+      } as any) as any;
       console.log('[Supabase] Client initialized successfully for:', supabaseUrl);
     } catch (error) {
       console.warn('[Supabase] Failed to initialize Supabase client:', error);

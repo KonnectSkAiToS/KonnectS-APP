@@ -193,3 +193,22 @@ export async function removeCriticalData(collectionName: string, docId: string):
 export async function getCriticalCollection(collectionName: string): Promise<any[]> {
   return getCachedItems(`critical_${collectionName}`);
 }
+
+/** Remove locally cached per-user data (call on logout so the next person on a shared device sees nothing). */
+export function clearUserLocalData(): void {
+  try {
+    if (isBrowser) {
+      const prefixes = ['konnects_cache_critical_', 'konnects_profile_cache_', 'konnects_pending_tasks_cache_', 'konnects_guest_profile'];
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (key && prefixes.some(p => key.startsWith(p))) localStorage.removeItem(key);
+      }
+    }
+    memoryStore.criticalUserData = [];
+    for (const key of Object.keys(memoryStore)) {
+      if (key.startsWith('critical_')) delete memoryStore[key];
+    }
+  } catch (err) {
+    console.warn('[cache] Failed to clear user data:', err);
+  }
+}

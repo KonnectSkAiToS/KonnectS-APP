@@ -1,12 +1,11 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 0. Default Deny
-    match /{document=**} {
-      allow read, write: if false;
-    }
+    // Anything not matched below is denied by Firestore's implicit default.
+    // (A `match /{document=**} { allow: false }` block does NOT override other
+    // matches because rule matches are OR'd, so it is intentionally omitted.)
 
-    // Helper functions
+    // ---------- Helpers ----------
     function isSignedIn() {
       return request.auth != null;
     }
@@ -15,8 +14,9 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    // Admin is granted ONLY via a custom claim set server-side (never by the client).
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.admin == true;
     }
 
     function incoming() {
@@ -27,11 +27,21 @@ service cloud.firestore {
       return resource.data;
     }
 
-    // 1. User Rules
+    function changed() {
+      return incoming().diff(existing()).affectedKeys();
+    }
+
+    function isWorkerUser() {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isWorker', false) == true;
+    }
+
+    // ---------- 1. Users ----------
     match /users/{userId} {
       function isValidUser(data) {
         return data.keys().hasAll(['uid', 'email', 'username', 'createdAt']) &&
-               data.uid is string && data.uid.size() <= 128 &&
+               data.uid == userId &&
                data.email is string && data.email.size() <= 256 &&
                data.username is string && data.username.size() <= 64 &&
                (!('firstName' in data) || data.firstName is string) &&
@@ -40,11 +50,11 @@ service cloud.firestore {
                (!('isWorker' in data) || data.isWorker is bool) &&
                (!('isOnline' in data) || data.isOnline is bool) &&
                (!('workerType' in data) || data.workerType is string) &&
-               (!('rewardsPoints' in data) || data.rewardsPoints is number) &&
+               (!('rewardsPoints' in data) || (data.rewardsPoints is number && data.rewardsPoints >= 0)) &&
                (!('referralCode' in data) || data.referralCode is string) &&
                (!('carbonSavingsKg' in data) || data.carbonSavingsKg is number) &&
                (!('savedAddresses' in data) || data.savedAddresses is list) &&
-               (!('discountBalance' in data) || data.discountBalance is number) &&
+               (!('discountBalance' in data) || (data.discountBalance is number && data.discountBalance >= 0)) &&
                (!('referredUsersCount' in data) || data.referredUsersCount is number) &&
                (!('earnedBadges' in data) || data.earnedBadges is list) &&
                (!('invitedBy' in data) || data.invitedBy is string) &&
@@ -67,38 +77,95 @@ service cloud.firestore {
                (!('featured' in data) || data.featured is bool);
       }
 
-      allow read: if true;
-      allow create: if isOwner(userId) && isValidUser(incoming()) && incoming().createdAt == request.time;
-      allow update: if isOwner(userId) && (
-        // Only allow updating non-critical fields
-        incoming().diff(existing()).affectedKeys().hasOnly([
-          'username', 'firstName', 'lastName', 'fullName', 'mobileNumber', 'avatarUrl', 
+      // Fields a user may set on their OWN profile at sign-up. Trust fields
+      // (rating, reviewCount, verificationStatus, isPremiumWorker, featured,
+      // premiumExpiryDate, discountBalance) are deliberately NOT creatable.
+      function isAllowedCreateKeys(data) {
+        return data.keys().hasOnly([
+          'uid', 'email', 'username', 'firstName', 'lastName', 'fullName',
+          'isWorker', 'isWorkerMode', 'workerType', 'hourlyRate', 'bio',
+          'mobileNumber', 'dateOfBirth', 'gender', 'avatarUrl',
+          'rewardsPoints', 'referralCode', 'carbonSavingsKg', 'earnedBadges',
+          'loginCount', 'createdAt', 'appLanguage', 'darkMode'
+        ]);
+      }
+
+      // Trust / money-like fields are admin- or server-controlled. Users can
+      // only nudge points by a small, non-negative amount and cannot touch the rest.
+      function pointsChangeIsSafe() {
+        return !changed().hasAny(['rewardsPoints']) ||
+               (incoming().rewardsPoints >= 0 &&
+                incoming().rewardsPoints - existing().get('rewardsPoints', 0) <= 100);
+      }
+
+      function loginCountIsSafe() {
+        return !changed().hasAny(['loginCount']) ||
+               incoming().loginCount == existing().get('loginCount', 0) + 1;
+      }
+
+      // 'verified' is only ever granted by an admin and cannot be removed/forged by the user.
+      function verificationIsSafe() {
+        return !changed().hasAny(['verificationStatus']) ||
+               (existing().get('verificationStatus', '') != 'verified' &&
+                incoming().verificationStatus in ['unverified', 'pending', 'in_progress', 'rejected']);
+      }
+
+      // Signed-in users can fetch a single profile by uid (needed for chat, listings
+      // and bookings) but cannot list/scan the collection. Admins can list.
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+
+      allow create: if isOwner(userId) &&
+                    isValidUser(incoming()) &&
+                    isAllowedCreateKeys(incoming()) &&
+                    incoming().createdAt == request.time &&
+                    incoming().get('rewardsPoints', 0) <= 100;
+
+      allow update: if (
+        isOwner(userId) &&
+        changed().hasOnly([
+          'username', 'firstName', 'lastName', 'fullName', 'mobileNumber', 'avatarUrl',
           'workerType', 'isWorker', 'isOnline', 'updatedAt', 'savedItems',
           'verificationStatus', 'verificationStep', 'documents', 'hourlyRate',
           'isWorkerMode', 'autoAcceptConfig', 'rewardsPoints', 'referralCode',
           'dateOfBirth', 'gender', 'bio', 'carbonSavingsKg', 'savedAddresses',
-          'discountBalance', 'referredUsersCount', 'earnedBadges', 'invitedBy',
-          'availabilityStatus', 'appLanguage', 'rating', 'reviewCount', 'location',
+          'referredUsersCount', 'earnedBadges', 'invitedBy',
+          'availabilityStatus', 'appLanguage', 'location',
           'priceDropNotificationsEnabled', 'quietHoursEnabled', 'quietHoursStart',
           'quietHoursEnd', 'accessibilityFontScale', 'accessibilityHighContrast',
-          'darkMode', 'isPremiumWorker', 'premiumExpiryDate', 'skills', 
-          'verificationPhoto', 'featured'
+          'darkMode', 'skills', 'verificationPhoto', 'loginCount'
         ]) &&
-        // Security Guard: Prevent user from self-verifying to 'verified'
-        (
-          !incoming().diff(existing()).affectedKeys().hasAny(['verificationStatus']) ||
-          incoming().verificationStatus != 'verified'
-        ) &&
+        pointsChangeIsSafe() &&
+        loginCountIsSafe() &&
+        verificationIsSafe() &&
         isValidUser(incoming()) &&
         incoming().createdAt == existing().createdAt &&
         incoming().uid == existing().uid &&
-        // If updatedAt is changed, it must be the server time
-        (!incoming().diff(existing()).affectedKeys().hasAny(['updatedAt']) || 
-         incoming().updatedAt == request.time)
-      );
+        (!changed().hasAny(['updatedAt']) || incoming().updatedAt == request.time)
+      ) || isAdmin();
+
+      allow delete: if false;
     }
 
-    // 2. Marketplace Item Rules
+    // ---------- 1.1 Login index ----------
+    // Lets the login screen resolve username/mobile -> email with a single `get`
+    // (no listing / scraping). Keys look like "u_<username>" or "m_<digits>".
+    match /login_index/{key} {
+      allow get: if true;
+      allow list: if false;
+      function isValidIndexEntry(data) {
+        return data.keys().hasOnly(['uid', 'email', 'username']) &&
+               data.uid == request.auth.uid &&
+               data.email == request.auth.token.email &&
+               key.size() <= 300;
+      }
+      // Create a new key, or re-write one you already own. You can never take over someone else's key.
+      allow create: if isSignedIn() && isValidIndexEntry(incoming());
+      allow update: if isOwner(existing().uid) && isValidIndexEntry(incoming());
+      allow delete: if isOwner(existing().uid);
+    }
+
+    // ---------- 2. Marketplace items ----------
     match /items/{itemId} {
       function isValidItem(data) {
         return data.keys().hasAll(['sellerId', 'title', 'price', 'isFree', 'status', 'createdAt']) &&
@@ -115,24 +182,20 @@ service cloud.firestore {
 
       allow read: if isSignedIn();
       allow create: if isSignedIn() && isValidItem(incoming()) && incoming().createdAt == request.time;
-      allow update: if isSignedIn() && (
-        isOwner(existing().sellerId) && (
-          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'price', 'isFree', 'status', 'images', 'location', 'updatedAt', 'category', 'condition']) &&
-          isValidItem(incoming()) &&
-          incoming().createdAt == existing().createdAt
-        ) ||
-        // Allow others to update status (e.g. mark as sold if it's a platform action, but restricted usually)
-        (isOwner(existing().sellerId) && incoming().diff(existing()).affectedKeys().hasAny(['status']))
-      );
+      // Only the seller may update, only whitelisted fields, always re-validated.
+      allow update: if isOwner(existing().sellerId) &&
+                    changed().hasOnly(['title', 'description', 'price', 'isFree', 'status', 'images', 'location', 'updatedAt', 'category', 'condition']) &&
+                    isValidItem(incoming()) &&
+                    incoming().createdAt == existing().createdAt;
       allow delete: if false; // Soft delete via status
     }
 
-    // 2.1 Offers Rules
+    // ---------- 2.1 Offers ----------
     match /offers/{offerId} {
       function isValidOffer(data) {
         return data.keys().hasAll(['itemId', 'sellerId', 'buyerId', 'offerPrice', 'status', 'createdAt']) &&
                data.offerPrice is number && data.offerPrice > 0 &&
-               data.status in ['pending', 'accepted', 'rejected'] &&
+               data.status == 'pending' &&
                data.createdAt is timestamp &&
                (!('itemTitle' in data) || data.itemTitle is string) &&
                (!('buyerDisplayName' in data) || data.buyerDisplayName is string) &&
@@ -140,13 +203,22 @@ service cloud.firestore {
       }
 
       allow read: if isSignedIn() && (isOwner(resource.data.buyerId) || isOwner(resource.data.sellerId));
-      allow create: if isSignedIn() && incoming().buyerId == request.auth.uid && isValidOffer(incoming()) && incoming().createdAt == request.time;
-      allow update: if isSignedIn() && (isOwner(existing().sellerId) || isOwner(existing().buyerId)) && 
-                    incoming().diff(existing()).affectedKeys().hasOnly(['status']) &&
-                    incoming().status in ['accepted', 'rejected'];
+      allow create: if isSignedIn() &&
+                    incoming().buyerId == request.auth.uid &&
+                    incoming().sellerId != request.auth.uid &&
+                    isValidOffer(incoming()) &&
+                    incoming().createdAt == request.time &&
+                    // sellerId must really be the item's seller
+                    get(/databases/$(database)/documents/items/$(incoming().itemId)).data.sellerId == incoming().sellerId;
+      // Only the seller can accept/reject; the buyer can only withdraw (reject) their own offer.
+      allow update: if changed().hasOnly(['status']) &&
+                    (
+                      (isOwner(existing().sellerId) && incoming().status in ['accepted', 'rejected']) ||
+                      (isOwner(existing().buyerId) && incoming().status == 'rejected')
+                    );
     }
 
-    // 3. Chat Rules
+    // ---------- 3. Chats ----------
     match /chats/{messageId} {
       function isValidMessage(data) {
         return data.keys().hasAll(['senderId', 'recipientId', 'text', 'timestamp', 'roomId']) &&
@@ -165,7 +237,7 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidMessage(incoming()) && incoming().timestamp == request.time;
     }
 
-    // 4. Booking Rules
+    // ---------- 4. Bookings ----------
     match /bookings/{bookingId} {
       function isValidBooking(data) {
         return data.keys().hasAll(['customerId', 'serviceType', 'status', 'createdAt']) &&
@@ -177,23 +249,39 @@ service cloud.firestore {
                (!('estimatedCompletionTime' in data) || data.estimatedCompletionTime is string);
       }
 
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && incoming().customerId == request.auth.uid && 
-                    isValidBooking(incoming()) && incoming().createdAt == request.time;
-      allow update: if isSignedIn() && (
-        // Customer actions
-        (isOwner(existing().customerId) && 
-         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'description', 'updatedAt', 'suggestedPrice', 'createdAt'])) ||
-        // Worker actions (accepting or countering)
-        (incoming().diff(existing()).affectedKeys().hasAny(['workerId', 'status', 'suggestedPrice', 'estimatedCompletionTime', 'updatedAt']) && 
-         (incoming().status in ['accepted', 'negotiating'])) ||
-        // Assigned worker actions
-        (existing().workerId != null && isOwner(existing().workerId) && 
-         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
-      ) && isValidBooking(incoming()) && (incoming().createdAt == existing().createdAt || isOwner(existing().customerId));
+      // Customers see their own bookings, assigned workers see theirs, and
+      // worker accounts can browse the job board. Other customers cannot read them.
+      allow read: if isOwner(resource.data.customerId) ||
+                     isOwner(resource.data.get('workerId', '')) ||
+                     isWorkerUser();
+
+      allow create: if isSignedIn() &&
+                    incoming().customerId == request.auth.uid &&
+                    isValidBooking(incoming()) &&
+                    incoming().createdAt == request.time;
+
+      allow update: if isSignedIn() &&
+                    isValidBooking(incoming()) &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().customerId == existing().customerId &&
+                    (
+                      // Customer actions
+                      (isOwner(existing().customerId) &&
+                       changed().hasOnly(['status', 'description', 'updatedAt', 'suggestedPrice', 'autoRenew'])) ||
+                      // A worker claiming an unassigned job (accept or counter-offer)
+                      (isWorkerUser() &&
+                       existing().get('workerId', null) == null &&
+                       existing().status in ['pending', 'negotiating'] &&
+                       changed().hasOnly(['workerId', 'status', 'suggestedPrice', 'estimatedCompletionTime', 'updatedAt']) &&
+                       incoming().workerId == request.auth.uid &&
+                       incoming().status in ['accepted', 'negotiating']) ||
+                      // The assigned worker progressing their own job
+                      (isOwner(existing().get('workerId', '')) &&
+                       changed().hasOnly(['status', 'suggestedPrice', 'estimatedCompletionTime', 'updatedAt']))
+                    );
     }
 
-    // 5. AR Snapshots Rules
+    // ---------- 5. AR snapshots ----------
     match /ar_snapshots/{snapshotId} {
       function isValidArSnapshot(data) {
         return data.keys().hasAll(['userId', 'itemId', 'itemTitle', 'scale', 'rotate', 'offset', 'timestamp']) &&
@@ -214,7 +302,7 @@ service cloud.firestore {
       allow delete: if isSignedIn() && existing().userId == request.auth.uid;
     }
 
-    // 6. AR Library Placement Rules
+    // ---------- 6. AR library placements ----------
     match /ar_library/{placementId} {
       function isValidArLibraryPlacement(data) {
         return data.keys().hasAll(['userId', 'itemId', 'arScale', 'arRotate', 'arDragOffset', 'savedAt']) &&
@@ -233,73 +321,122 @@ service cloud.firestore {
       allow delete: if isSignedIn() && existing().userId == request.auth.uid;
     }
 
-    // 7. SOS Alerts Rules
+    // ---------- 7. SOS alerts ----------
+    // Must be signed in and tied to the caller's own uid (no anonymous spam).
     match /sos_alerts/{alertId} {
-      allow create: if true;
-      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn() &&
+                    incoming().userId == request.auth.uid &&
+                    incoming().keys().size() <= 20;
+      allow read: if isOwner(resource.data.userId) || isAdmin();
     }
 
-    // 8. Reviews Rules
+    // ---------- 8. Reviews ----------
     match /reviews/{reviewId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() &&
+                    incoming().userId == request.auth.uid &&
+                    incoming().rating is number && incoming().rating >= 1 && incoming().rating <= 5 &&
+                    incoming().comment is string && incoming().comment.size() <= 1000 &&
+                    incoming().createdAt == request.time &&
+                    (('productId' in incoming()) || ('providerId' in incoming())) &&
+                    // no reviewing yourself
+                    (!('providerId' in incoming()) || incoming().providerId != request.auth.uid);
+      allow update, delete: if false;
     }
 
-    // 9. Ledger Rules (Skill Swap)
-    match /ledgers/{ledgerId} {
+    // ---------- 9/11. Ledgers, rentals, CRM clients ----------
+    // No client code uses these collections; locked until a feature needs them.
+    match /ledgers/{id} { allow read, write: if false; }
+    match /rentals/{id} { allow read, write: if false; }
+    match /crm_clients/{id} { allow read, write: if false; }
+
+    // ---------- 10. Contractor CRM (private to the contractor) ----------
+    match /contractor_crm/{crmId} {
+      allow read, delete: if isOwner(resource.data.contractorId);
+      allow create: if isSignedIn() && incoming().contractorId == request.auth.uid;
+      allow update: if isOwner(existing().contractorId) && incoming().contractorId == existing().contractorId;
+    }
+
+    // ---------- 12. HMRC logs (private to the worker) ----------
+    match /hmrc_logs/{logId} {
+      allow read, delete: if isOwner(resource.data.workerId);
+      allow create: if isSignedIn() && incoming().workerId == request.auth.uid;
+      allow update: if isOwner(existing().workerId) && incoming().workerId == existing().workerId;
+    }
+
+    // ---------- 14. Discussions ----------
+    match /discussions/{discussionId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+                    incoming().authorId == request.auth.uid &&
+                    incoming().title is string && incoming().title.size() <= 200 &&
+                    incoming().content is string && incoming().content.size() <= 5000 &&
+                    incoming().createdAt == request.time;
+      // Anyone signed in may add ONE reply or ONE reaction at a time; nothing else.
+      allow update: if isSignedIn() &&
+                    changed().hasOnly(['replies', 'reactions']) &&
+                    (!changed().hasAny(['reactions']) ||
+                      (incoming().reactions is number && incoming().reactions - existing().get('reactions', 0) <= 1 && incoming().reactions >= 0)) &&
+                    (!changed().hasAny(['replies']) ||
+                      (incoming().replies is list && incoming().replies.size() <= existing().get('replies', []).size() + 1));
+      allow delete: if isOwner(resource.data.authorId);
+    }
+
+    // ---------- 15. Safety alerts ----------
+    match /safety_alerts/{alertId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+                    (!('userId' in incoming()) || incoming().userId == request.auth.uid);
+      allow update, delete: if isAdmin();
+    }
+
+    // ---------- 16. Community pulse ----------
+    match /community_pulse/{pulseId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn();
+      // Support (+1) and RSVP (add/remove one entry) only.
+      allow update: if isSignedIn() &&
+                    changed().hasOnly(['supportersCount', 'rsvpedUsers']) &&
+                    (!changed().hasAny(['supportersCount']) ||
+                      (incoming().supportersCount is number && incoming().supportersCount - existing().get('supportersCount', 0) == 1)) &&
+                    (!changed().hasAny(['rsvpedUsers']) ||
+                      (incoming().rsvpedUsers is list &&
+                       incoming().rsvpedUsers.size() - existing().get('rsvpedUsers', []).size() <= 1 &&
+                       existing().get('rsvpedUsers', []).size() - incoming().rsvpedUsers.size() <= 1));
+      allow delete: if isAdmin();
     }
 
-    // 10. CRM Client Rules
-    match /crm_clients/{crmId} {
-      allow read, write: if isSignedIn();
-    }
-
-    // 11. Rentals Rules
-    match /rentals/{rentalId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn();
-    }
-
-    // 12. HMRC Logs Rules
-    match /hmrc_logs/{logId} {
-      allow read, write: if isSignedIn();
-    }
-
-    // 13. Contractor CRM Rules
-    match /contractor_crm/{crmId} {
-      allow read, write: if isSignedIn();
-    }
-
-    // 14. Discussions Rules
-    match /discussions/{discussionId} {
-      allow read, write: if isSignedIn();
-    }
-
-    // 15. Safety Alerts Rules
-    match /safety_alerts/{alertId} {
-      allow read, write: if isSignedIn();
-    }
-
-    // 16. Community Pulse Rules
-    match /community_pulse/{pulseId} {
-      allow read, write: if isSignedIn();
-    }
-
-    // 17. Community Chats Rules
+    // ---------- 17. Community chats ----------
     match /community_chats/{chatId} {
-      allow read, write: if isSignedIn();
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+                    incoming().senderId == request.auth.uid &&
+                    incoming().text is string && incoming().text.size() <= 1000 &&
+                    incoming().timestamp == request.time;
+      allow update, delete: if false;
     }
 
-    // 18. Feedback Rules
+    // ---------- 18. Feedback (write-only for users, readable by admins) ----------
     match /feedback/{feedbackId} {
-      allow read, write: if isSignedIn();
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow read: if isAdmin();
+      allow update, delete: if false;
     }
 
-    // 19. Audit Logs Rules
+    // ---------- 19. Audit logs (append-only, admin-readable) ----------
     match /audit_logs/{logId} {
-      allow read, write: if isSignedIn();
+      allow create: if isSignedIn();
+      allow read: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // ---------- 20. Admin-only data ----------
+    match /activity_logs/{logId} {
+      allow read, create: if isAdmin();
+      allow update, delete: if false;
+    }
+    match /admin/{docId} {
+      allow read, write: if isAdmin();
     }
   }
 }
