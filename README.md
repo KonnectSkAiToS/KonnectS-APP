@@ -12,6 +12,7 @@ cp .env.example .env      # add GEMINI_API_KEY (and VITE_SUPABASE_ANON_KEY if yo
 npm run dev               # http://localhost:3000
 npm test                  # vitest
 npm run lint              # tsc + eslint (includes firestore.rules lint)
+npm run test:rules        # Firestore rules tests (needs Java + internet to fetch the emulator; ~45 cases)
 ```
 
 ## Security model (please read before deploying)
