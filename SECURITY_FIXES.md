@@ -29,6 +29,11 @@
 - `LoginView.tsx`: plaintext password no longer stored in localStorage; fake "biometric" login removed; username/mobile lookup via `login_index`.
 - Dev-only "instant verify" buttons hidden outside dev builds; premium upgrade shows a real error instead of failing silently.
 
+## Rules tests
+`npm run test:rules` runs `tests/rules/firestore.rulestest.ts` against the Firestore emulator (needs Java). These tests were written
+without being able to execute them (the emulator could not be downloaded in the authoring sandbox), so treat the first run as
+the real verification: a failing test means either the test or the rule needs a fix, so check which before changing either.
+
 ## Known limitations / follow-ups
 - Any signed-in user can still `get` another user's full profile document by uid (needed by chat/listings). The worker directory
   now reads `/public_profiles` (safe fields only; trust fields must match the owner's real `/users` values, enforced by the rules),
