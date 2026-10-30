@@ -1,28 +1,16 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, doc, increment, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, doc, increment, serverTimestamp } from 'firebase/firestore';
+import { useCommunityFeed } from '../features/community/hooks/useCommunity';
+import type { PulseItem } from '../features/community/types';
 import { Calendar, Users, HeartHandshake, TrendingUp, Check, Plus, MessageSquare, MapPin, X } from 'lucide-react';
-
-interface PulseItem {
-  id: string;
-  title: string;
-  description: string;
-  category: 'project' | 'volunteer' | 'discussion';
-  pointsReward?: number;
-  location: string;
-  dateOrReplies: string;
-  supportersCount: number;
-  rsvpedUsers?: string[];
-  createdAt?: any;
-}
 
 export function CommunityPulse() {
   const { user, profile } = useAuth();
-  const [pulseItems, setPulseItems] = useState<PulseItem[]>([]);
+  const { data: pulseItems, loading } = useCommunityFeed();
   const [activeTab, setActiveTab] = useState<'all' | 'project' | 'volunteer' | 'discussion'>('all');
-  const [loading, setLoading] = useState(true);
 
   // New posting fields
   const [showAddForm, setShowAddForm] = useState(false);
@@ -32,90 +20,6 @@ export function CommunityPulse() {
   const [newLocation, setNewLocation] = useState('');
   const [newDateOrReplies, setNewDateOrReplies] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const seedDefaultItems = useCallback(async () => {
-    const defaults: Omit<PulseItem, 'id'>[] = [
-      {
-        title: "Main Street Community Garden Cleanup",
-        description: "Join your neighbors to prune, plant organic tomatoes, and establish a collective composting station.",
-        category: "volunteer",
-        pointsReward: 15,
-        location: "Shoreditch Community Garden",
-        dateOrReplies: "Saturday 10:00 AM",
-        supportersCount: 8,
-        rsvpedUsers: [],
-        createdAt: new Date()
-      },
-      {
-        title: "Rooftop Solar Co-operative Assembly",
-        description: "Reviewing bulk pricing options for micro-grid solar matching across local terraced homes.",
-        category: "project",
-        pointsReward: 25,
-        location: "Community Hall Room A",
-        dateOrReplies: "Underway (75% Funded)",
-        supportersCount: 14,
-        rsvpedUsers: [],
-        createdAt: new Date(Date.now() - 3600000)
-      },
-      {
-        title: "Bulk Purchase Group Electric Heat Pumps",
-        description: "Looking for 10 homeowners interested in clean heat pump conversions to trigger 30% volume discounts.",
-        category: "discussion",
-        location: "Online forum link",
-        dateOrReplies: "24 replies",
-        supportersCount: 5,
-        rsvpedUsers: [],
-        createdAt: new Date(Date.now() - 7200000)
-      },
-      {
-        title: "Air Quality Sensors Deployment",
-        description: "Setting up 8 pollution sampling nodes to monitor microparticle soot around local high street schools.",
-        category: "project",
-        pointsReward: 20,
-        location: "Old Street Environs",
-        dateOrReplies: "Active Launch Stage",
-        supportersCount: 19,
-        rsvpedUsers: [],
-        createdAt: new Date(Date.now() - 10800000)
-      }
-    ];
-
-    try {
-      for (const item of defaults) {
-        await addDoc(collection(db, 'community_pulse'), {
-          ...item,
-          createdAt: serverTimestamp()
-        });
-      }
-    } catch (e) {
-      console.error("Error seeding community pulse values:", e);
-    }
-  }, []);
-
-  // Load Feed
-  useEffect(() => {
-    const q = query(collection(db, 'community_pulse'), orderBy('createdAt', 'desc'));
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const items: PulseItem[] = [];
-      snapshot.forEach((doc) => {
-        items.push({ id: doc.id, ...doc.data() } as PulseItem);
-      });
-
-      if (items.length === 0) {
-        // Seed default items if collection is empty
-        seedDefaultItems();
-      } else {
-        setPulseItems(items);
-        setLoading(false);
-      }
-    }, (error) => {
-      console.error("Pulse feed stream error:", error);
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, [seedDefaultItems]);
 
   const handleSupport = async (itemId: string) => {
     try {

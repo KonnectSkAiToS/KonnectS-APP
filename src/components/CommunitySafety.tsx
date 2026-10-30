@@ -1,54 +1,16 @@
 import { useState, useEffect } from 'react';
 import { ShieldAlert, AlertOctagon, Flame, CloudLightning, ShieldOff, Volume2, Plus, X, CircleDot, Clock, MapPin, CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, getDocs } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { useSafetyAlerts } from '../features/community/hooks/useCommunity';
+import type { SafetyAlert } from '../features/community/types';
 import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { haptics } from '../utils/haptics';
 
-interface SafetyAlert {
-  id: string;
-  title: string;
-  description: string;
-  category: 'hazard' | 'utility' | 'weather' | 'incidents' | 'other';
-  durationMinutes: number;
-  radiusMiles: number;
-  locationName: string;
-  reporterName: string;
-  createdAt: any;
-  resolved: boolean;
-}
-
-const SEEDED_ALERTS: SafetyAlert[] = [
-  {
-    id: 'safe-alert-1',
-    title: 'Water Main Burst near pitfield st',
-    description: 'Avoid pedestrian tunnels due to localized flooding and high water levels. Maintenance services are on-site.',
-    category: 'utility',
-    durationMinutes: 120, // 2 hours
-    radiusMiles: 0.35,
-    locationName: 'Pitfield Street, Shoreditch',
-    reporterName: 'London Utility Dispatch',
-    resolved: false,
-    createdAt: new Date(Date.now() - 25 * 60 * 1000).toISOString() // 25 mins ago
-  },
-  {
-    id: 'safe-alert-2',
-    title: 'Severe Storm Falling Tree branches',
-    description: 'High winds have dislodged tree limbs near boundary garden walk. Watch out while biking/walking!',
-    category: 'weather',
-    durationMinutes: 240, // 4 hours
-    radiusMiles: 0.75,
-    locationName: 'Boundary Street, London',
-    reporterName: 'Climate Team Volunteer',
-    resolved: false,
-    createdAt: new Date(Date.now() - 45 * 60 * 1000).toISOString() // 45 mins ago
-  }
-];
-
 export function CommunitySafety() {
   const { user, profile } = useAuth();
-  const [alerts, setAlerts] = useState<SafetyAlert[]>(SEEDED_ALERTS);
+  const { data: alerts } = useSafetyAlerts();
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
   const [broadcasting, setBroadcasting] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -69,27 +31,6 @@ export function CommunitySafety() {
   const [locationName, setLocationName] = useState('Shoreditch, London');
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // Load broadcasts in real-time from Firestore, falling back to local list on failure
-  useEffect(() => {
-    try {
-      const q = query(collection(db, 'safety_alerts'), orderBy('createdAt', 'desc'));
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SafetyAlert));
-        // Merge with seeded ones if firestore returns empty
-        if (list.length > 0) {
-          setAlerts([...list, ...SEEDED_ALERTS]);
-        } else {
-          setAlerts(SEEDED_ALERTS);
-        }
-      }, (err) => {
-        console.warn('Real-time safety alerts failed (probably network). Using local simulation.', err);
-      });
-      return () => unsubscribe();
-    } catch (e) {
-      console.error(e);
-    }
-  }, []);
-
   const handleBroadcastSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim() || !description.trim()) return;
@@ -107,19 +48,15 @@ export function CommunitySafety() {
       createdAt: new Date().toISOString()
     };
 
+    let sent = false;
     try {
-      // Direct Firestore write
       await addDoc(collection(db, 'safety_alerts'), {
         ...newAlert,
         createdAt: serverTimestamp()
       });
+      sent = true;
     } catch (err) {
-      console.warn("Saving alert offline due to database restriction.", err);
-      // Fallback local append
-      setAlerts(prev => [
-        { id: 'offline-' + Date.now(), ...newAlert },
-        ...prev
-      ]);
+      console.warn('Could not broadcast safety alert.', err);
     } finally {
       // Play audio effect & heavy vibration
       haptics.heavy();
@@ -132,11 +69,13 @@ export function CommunitySafety() {
       }
 
       setBroadcasting(false);
-      setShowBroadcastModal(false);
-      setTitle('');
-      setDescription('');
-      setCategory('hazard');
-      setSuccessMsg('Broadcast alert successfully sent in a 1-mile radius!');
+      if (sent) {
+        setShowBroadcastModal(false);
+        setTitle('');
+        setDescription('');
+        setCategory('hazard');
+      }
+      setSuccessMsg(sent ? 'Broadcast alert successfully sent in a 1-mile radius!' : 'Could not send the alert. Please try again.');
       setTimeout(() => setSuccessMsg(null), 4000);
     }
   };

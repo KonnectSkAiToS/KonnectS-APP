@@ -19,6 +19,9 @@ import { APIProvider, Map, Marker } from '@vis.gl/react-google-maps';
 import { Testimonials } from './Testimonials';
 import { SpatialARScannerModal } from './SpatialARScannerModal';
 import { haptics } from '../utils/haptics';
+import { WorkerCard } from '../features/services/components/WorkerCard';
+import { useWorkers } from '../features/services/hooks/useWorkers';
+import { useActiveBookings, useHubs } from '../features/services/hooks/useMapMarkers';
 import { CalendarSyncManager } from '../services/calendarService';
 import { QRScannerModal } from './QRScannerModal';
 import { FeatureSpotlight } from './FeatureSpotlight';
@@ -70,26 +73,11 @@ const ALL_SPECIFIC_ROLES = [
 ];
 
 // Pre-seeded professional database matching Shoreditch geographic location
-const SEEDED_PROFESSIONALS = [
-  { id: 'spro-alex', name: 'Alex Rivera', role: 'Master Electrician', locationName: 'Shoreditch, London', rating: 4.9, reviews: 142, price: 55, status: 'available', category: 'trades', bio: 'Certified Master Electrician with 12+ years of experience across London. Specialising in emergency callouts, smart home installations, safety certifications, and commercial rewiring. DBS Checked.' },
-  { id: 'spro-sarah', name: 'Sarah Jenkins', role: 'Childcare Specialist', locationName: 'Hoxton, London', rating: 4.8, reviews: 98, price: 22, status: 'available', category: 'healthcare', bio: 'Ofsted-registered Childcare Specialist and early-years tutor. Over 8 years of nurturing care, first-aid certified, and DBS clear. Providing premium babysitting, learning development plans, and emergency childcare.' },
-  { id: 'spro-marcus', name: 'Marcus Thorne', role: 'Professional Cleaning', locationName: 'Bethnal Green, London', rating: 4.7, reviews: 215, price: 18, status: 'available', category: 'trades', bio: 'Eco-friendly Professional Cleaning Expert. 6+ years delivering spotless domestic, end-of-tenancy, and deep office sanitisation. Using 100% bio-degradable products. Fast, reliable, and insured.' },
-  { id: 'spro-elena', name: 'Elena Gilbert', role: 'Delivery Partner', locationName: 'Camden Town, London', rating: 4.9, reviews: 312, price: 15, status: 'available', category: 'trades', bio: 'Efficient, friendly Delivery & Logistics Partner. Covering London zones 1-4 with a private eco-vehicle. Specialising in fragile parcel transport, multi-stop business logistics, and instant local courier service.' },
-  { id: 'spro-david', name: 'David Okafor', role: 'Handyman & Repair', locationName: 'Soho, London', rating: 4.8, reviews: 184, price: 30, status: 'available', category: 'trades', bio: 'Your trusted neighbourhood Handyman and Multi-Trader. Skilled in plumbing repairs, flatpack assembly, lock repairs, and minor painting/decorating. Quick 1-hour response. Fully insured.' },
-  { id: 'spro-1', name: 'Dr. Evelyn Carter', role: 'Physician', locationName: 'Shoreditch, London', rating: 4.9, reviews: 142, price: 85, status: 'available', category: 'healthcare' },
-  { id: 'spro-2', name: 'Liam Sterling', role: 'AI Engineer', locationName: 'Hoxton, London', rating: 5.0, reviews: 67, price: 120, status: 'available', category: 'technology' },
-  { id: 'spro-3', name: 'Marcus Vance', role: 'Electrician', locationName: 'Bethnal Green, London', rating: 4.8, reviews: 290, price: 45, status: 'available', category: 'trades' },
-  { id: 'spro-4', name: 'Prof. Diana Hughes', role: 'Professor', locationName: 'Camden Town, London', rating: 4.9, reviews: 88, price: 55, status: 'available', category: 'education' },
-  { id: 'spro-5', name: 'Rachel Vance', role: 'Accountant', locationName: 'Soho, London', rating: 4.7, reviews: 104, price: 65, status: 'available', category: 'business' },
-  { id: 'spro-6', name: 'Chef Gordon K.', role: 'Chef', locationName: 'Spitalfields, London', rating: 4.9, reviews: 215, price: 75, status: 'available', category: 'agriculture' },
-  { id: 'spro-7', name: 'Arthur Pendelton', role: 'Architect', locationName: 'Westminster, London', rating: 5.0, reviews: 41, price: 95, status: 'available', category: 'construction' },
-  { id: 'spro-8', name: 'Samantha Cole', role: 'Cybersecurity Analyst', locationName: 'Clerkenwell, London', rating: 4.8, reviews: 112, price: 110, status: 'available', category: 'technology' },
-  { id: 'spro-9', name: 'Mark Gable', role: 'Plumber', locationName: 'Hackney, London', rating: 4.9, reviews: 184, price: 50, status: 'available', category: 'trades' },
-  { id: 'spro-10', name: 'Nurse Clara Jenkins', role: 'Nurse', locationName: 'Islington, London', rating: 4.9, reviews: 92, price: 40, status: 'available', category: 'healthcare' }
-];
-
 export function ServicesView({ onChat }: { onChat: (id: string, name: string) => void }) {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
+  const { workers: liveWorkers } = useWorkers();
+  const hubs = useHubs();
+  const activeBookings = useActiveBookings();
   const [bookingStatus, setBookingStatus] = useState<'idle' | 'booking' | 'success'>('idle');
   const [selectedService, setSelectedService] = useState<{name: string, price: number, proName?: string, proId?: string} | null>(null);
   const [loading, setLoading] = useState(true);
@@ -372,17 +360,6 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
   const [isNearbyView, setIsNearbyView] = useState(false);
   const [mapLayers, setMapLayers] = useState({ workers: true, hubs: false, bookings: false });
 
-  const MOCK_HUBS = [
-    { id: 'h1', title: 'Shoreditch High St Overground (Transit Hub)', lat: 51.5234, lng: -0.0763, x: '25%', top: '45%' },
-    { id: 'h2', title: 'Old Street Tube Station (Transit Hub)', lat: 51.5257, lng: -0.0877, x: '75%', top: '25%' },
-    { id: 'h3', title: 'Liverpool Street Station (Transit Hub)', lat: 51.5178, lng: -0.0814, x: '45%', top: '85%' },
-  ];
-
-  const MOCK_ACTIVE_BOOKINGS = [
-    { id: 'ab1', title: 'Active Ride #4521 - En Route', lat: 51.5245, lng: -0.0750, x: '55%', top: '55%' },
-    { id: 'ab2', title: 'Active Service Booking #1240 - cleaning service', lat: 51.5295, lng: -0.0790, x: '80%', top: '70%' },
-  ];
-
   const [selectedMapPro, setSelectedMapPro] = useState<any>(null);
   const [mapLoadError, setMapLoadError] = useState(Boolean((window as any).gmapsHasFailed) || !GOOGLE_MAPS_API_KEY);
 
@@ -504,14 +481,14 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
     const lower = text.toLowerCase();
     
     // Check match for specific seeded professionals
-    let matchedPro = SEEDED_PROFESSIONALS.find(p => {
+    let matchedPro = liveWorkers.find(p => {
       const nameParts = p.name.toLowerCase().replace(/dr\.|chef|prof\./g, '').trim().split(' ');
       return nameParts.some(part => part.length > 3 && lower.includes(part));
     });
 
     if (!matchedPro) {
       // Find by role
-      matchedPro = SEEDED_PROFESSIONALS.find(p => lower.includes(p.role.toLowerCase()));
+      matchedPro = liveWorkers.find(p => lower.includes(p.role.toLowerCase()));
     }
 
     if (matchedPro) {
@@ -717,7 +694,16 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
 
   // Live filter and generate workers
   const visibleProfessionals = useMemo(() => {
-    let base = [...SEEDED_PROFESSIONALS].filter(p => !hiddenProIds.includes(p.id));
+    const roster = liveWorkers.map(w => ({ ...w, category: getCategoryOfRole(w.role) }));
+    // Straight-line miles from the user's saved location; unknown (either side missing) counts as too far.
+    const milesFromMe = (p: { lat?: number; lng?: number }) => {
+      const me = profile?.location;
+      if (!me || p.lat == null || p.lng == null) return Infinity;
+      const rad = (d: number) => (d * Math.PI) / 180;
+      const a = Math.sin(rad(p.lat - me.lat) / 2) ** 2 + Math.cos(rad(me.lat)) * Math.cos(rad(p.lat)) * Math.sin(rad(p.lng - me.lng) / 2) ** 2;
+      return 3958.8 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    };
+    let base = [...roster].filter(p => !hiddenProIds.includes(p.id));
 
     // Filter by sector tab
     if (activeSector !== 'all') {
@@ -727,11 +713,7 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
     // Apply Global Distance Filter
     if (globalDist !== 'all') {
       const distLimit = parseFloat(globalDist);
-      base = base.filter(p => {
-        // Map locations to simulated distances
-        const dist = p.id === 'spro-1' ? 0.3 : p.id === 'spro-2' ? 0.8 : p.id === 'spro-3' ? 1.5 : p.id === 'spro-4' ? 4.2 : p.id === 'spro-5' ? 3.1 : p.id === 'spro-6' ? 0.6 : p.id === 'spro-7' ? 5.5 : p.id === 'spro-8' ? 1.9 : p.id === 'spro-9' ? 2.1 : 2.8;
-        return dist <= distLimit;
-      });
+      base = base.filter(p => milesFromMe(p) <= distLimit);
     }
 
     // Apply Global Rating Filter
@@ -740,9 +722,9 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
       base = base.filter(p => p.rating >= minRate);
     }
 
-    // Apply Global Verified Status Filter (spro-4 and spro-7 are simulated as unverified)
+    // Apply Global Verified Status Filter
     if (globalVer) {
-      base = base.filter(p => p.id !== 'spro-4' && p.id !== 'spro-7');
+      base = base.filter(p => p.verified);
     }
 
     // Filter by text search
@@ -753,47 +735,6 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
         p.role.toLowerCase().includes(q) ||
         p.category.toLowerCase().includes(q)
       );
-
-      // If there are NO matches in physical list but query matches an item inside ALL_SPECIFIC_ROLES,
-      // let's dynamically generate a beautiful custom worker matching that specific role to satisfy everything flawlessly!
-      const matchedRoleInDict = ALL_SPECIFIC_ROLES.find(role => role.toLowerCase().includes(q));
-      if (matchedRoleInDict && base.length === 0) {
-        const cat = getCategoryOfRole(matchedRoleInDict);
-        const sectorDetail = SECTORS.find(s => s.id === cat);
-        
-        // Generate two highly tailored mock profiles
-        const dynName1 = `Alexander ${matchedRoleInDict.slice(0, 3)}on`;
-        const dynName2 = `Sarah ${matchedRoleInDict.charAt(0)} .`;
-        
-        const basePrice = cat === 'technology' ? 90 : cat === 'healthcare' ? 75 : cat === 'trades' ? 50 : 45;
-        
-        return [
-          {
-            id: `dyn-1`,
-            name: `${dynName1}`,
-            role: matchedRoleInDict,
-            locationName: '0.4 miles away • London',
-            rating: 4.9,
-            reviews: 42,
-            price: basePrice,
-            status: 'available',
-            category: cat,
-            isDynamic: true
-          },
-          {
-            id: `dyn-2`,
-            name: `${dynName2}`,
-            role: `${matchedRoleInDict} Pro`,
-            locationName: '1.2 miles away • Westminster',
-            rating: 4.8,
-            reviews: 19,
-            price: basePrice + 10,
-            status: 'available',
-            category: cat,
-            isDynamic: true
-          }
-        ];
-      }
     }
 
     // Today/Active filter
@@ -807,22 +748,12 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
     }
 
     // Proximity/Distance filter (under 1.0 miles)
-    const getMockDistanceVal = (p: any) => {
-      if (p.isDynamic) {
-        return p.id === 'dyn-1' ? 0.4 : 1.2;
-      }
-      if (p.locationName.includes('Shoreditch') || p.locationName.includes('Hoxton')) return 0.3;
-      if (p.locationName.includes('Bethnal Green') || p.locationName.includes('Hackney') || p.locationName.includes('Spitalfields')) return 0.8;
-      if (p.locationName.includes('Islington') || p.locationName.includes('Clerkenwell') || p.locationName.includes('Camden')) return 1.5;
-      return 2.5; 
-    };
-
     if (filterDistance) {
-      base = base.filter(p => getMockDistanceVal(p) <= 1.0);
+      base = base.filter(p => milesFromMe(p) <= 1.0);
     }
 
     return base;
-  }, [activeSector, searchQuery, filterToday, filterTopRated, filterDistance, hiddenProIds]);
+  }, [activeSector, searchQuery, filterToday, filterTopRated, filterDistance, hiddenProIds, liveWorkers, profile?.location]);
 
   return (
     <div className="pb-24 pt-6 px-4 max-w-md mx-auto min-h-screen">
@@ -1258,7 +1189,7 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
                     })}
 
                     {/* Transit Hubs */}
-                    {mapLayers.hubs && MOCK_HUBS.map((hub) => (
+                    {mapLayers.hubs && hubs.map((hub) => (
                       <button
                         key={hub.id}
                         type="button"
@@ -1272,7 +1203,7 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
                     ))}
 
                     {/* Active Bookings */}
-                    {mapLayers.bookings && MOCK_ACTIVE_BOOKINGS.map((booking) => (
+                    {mapLayers.bookings && activeBookings.map((booking) => (
                       <button
                         key={booking.id}
                         type="button"
@@ -1315,7 +1246,7 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
                       );
                     })}
 
-                    {mapLayers.hubs && MOCK_HUBS.map((hub) => (
+                    {mapLayers.hubs && hubs.map((hub) => (
                       <Marker
                         key={hub.id}
                         position={{ lat: hub.lat, lng: hub.lng }}
@@ -1323,7 +1254,7 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
                       />
                     ))}
 
-                    {mapLayers.bookings && MOCK_ACTIVE_BOOKINGS.map((booking) => (
+                    {mapLayers.bookings && activeBookings.map((booking) => (
                       <Marker
                         key={booking.id}
                         position={{ lat: booking.lat, lng: booking.lng }}
@@ -1429,113 +1360,17 @@ export function ServicesView({ onChat }: { onChat: (id: string, name: string) =>
           ) : (
             <div className="space-y-3.5">
               {visibleProfessionals.map((pro, index) => (
-                <motion.div
+                <WorkerCard
                   key={pro.id}
-                  initial={{ opacity: 0, y: 15 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.05 }}
-                  drag="x"
-                  dragConstraints={{ left: 0, right: 0 }}
-                  dragElastic={0.6}
-                  onDragEnd={(event, info) => {
-                    if (info.offset.x > 80) {
-                      haptics.success();
-                      alert(`🔖 Swipe Saved: Verified Expert "${pro.name}" has been bookmarked to your favorites!`);
-                    } else if (info.offset.x < -80) {
-                      haptics.heavy();
-                      setHiddenProIds(prev => [...prev, pro.id]);
-                      alert(`👁️ Swipe Hidden: "${pro.name}" is now hidden from your active recommendations.`);
-                    }
-                  }}
-                  className="p-5 bg-white rounded-3xl border border-slate-100 shadow-sm hover:shadow-md transition-all duration-300 flex items-start space-x-4 relative group"
-                >
-                {pro.isDynamic && (
-                  <span className="absolute top-3 right-3 bg-indigo-600/10 text-indigo-600 text-[7px] font-mono font-black px-1.5 py-0.5 rounded uppercase tracking-wider flex items-center space-x-0.5">
-                    <Sparkles size={8} />
-                    <span>Exact AI Match</span>
-                  </span>
-                )}
-                
-                <div className="w-12 h-12 bg-slate-50 border border-slate-100 rounded-2xl flex-shrink-0 flex items-center justify-center text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors">
-                  <Briefcase size={22} />
-                </div>
-                
-                <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-start mb-0.5">
-                    <div className="flex items-center space-x-2 flex-wrap gap-1">
-                       <h4 className="font-black text-slate-900 text-xs truncate max-w-[130px]">{pro.name}</h4>
-                       
-                       {/* Worker status indicator */}
-                       {(() => {
-                         const isBusy = (pro.status === 'busy' || index % 3 === 2);
-                         return isBusy ? (
-                           <span className="inline-flex items-center space-x-1 text-[7px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-red-50 text-red-650 border border-red-100">
-                             <span className="w-1 h-1 rounded-full bg-red-500 shrink-0" />
-                             <span>Busy</span>
-                           </span>
-                         ) : (
-                           <span className="inline-flex items-center space-x-1 text-[7px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-600 border border-emerald-100">
-                             <span className="w-1 h-1 rounded-full bg-emerald-500 shrink-0 animate-pulse" />
-                             <span>Active</span>
-                           </span>
-                         );
-                       })()}
-
-                       {/* Interactive Quick Tip Advice Badge */}
-                       <button
-                         onClick={(e) => {
-                           e.stopPropagation();
-                           haptics.light();
-                           setSelectedQuickTip({
-                             role: pro.role,
-                             name: pro.name,
-                             tip: getImprovementTip(pro.role)
-                           });
-                         }}
-                         className="inline-flex items-center space-x-0.5 text-[7px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 active:scale-95 transition-all cursor-pointer select-none"
-                       >
-                         <span>💡 Quick Tip</span>
-                       </button>
-                    </div>
-                    <div className="flex items-center space-x-1 text-amber-500">
-                      <Star size={11} fill="currentColor" />
-                      <span className="text-[10px] font-black">{pro.rating}</span>
-                    </div>
-                  </div>
-                  
-                  <p className="text-[11px] font-extrabold text-slate-500 mb-2">{pro.role}</p>
-                  
-                  <div className="flex items-center space-x-3.5 mb-4 text-[9.5px]">
-                    <div className="flex items-center space-x-1 text-slate-400">
-                      <Clock size={11} />
-                      <span className="font-bold uppercase tracking-wider">Fast Route</span>
-                    </div>
-                    <span className="font-extrabold text-slate-900 font-mono">£{pro.price}/hr</span>
-                    <div className="flex items-center space-x-1 text-slate-400">
-                      <MapPin size={10} className="text-emerald-500 shrink-0" />
-                      <span className="truncate max-w-[80px] font-medium">{pro.locationName?.split('•')[0]}</span>
-                    </div>
-                  </div>
-
-                  <div className="flex space-x-2">
-                    <button 
-                      onClick={() => setSelectedService({ name: pro.role, price: pro.price, proName: pro.name, proId: pro.id })}
-                      disabled={bookingStatus !== 'idle'}
-                      className="flex-1 py-3 bg-slate-900 border border-transparent hover:bg-slate-800 text-white rounded-xl text-[10px] font-black uppercase tracking-wider active:scale-95 transition-all flex items-center justify-center space-x-1.5 shadow-sm"
-                    >
-                      <Zap size={11} />
-                      <span>Request Pro</span>
-                    </button>
-                    <button 
-                      onClick={() => onChat(pro.id, pro.name)}
-                      className="px-3.5 bg-slate-50 hover:bg-slate-100 text-slate-700 font-black rounded-xl text-[10px] uppercase border-none active:scale-95 transition-transform flex items-center space-x-1"
-                    >
-                      <MessageSquare size={12} />
-                      <span>Chat</span>
-                    </button>
-                  </div>
-                </div>
-              </motion.div>
+                  pro={pro}
+                  index={index}
+                  requestDisabled={bookingStatus !== 'idle'}
+                  onRequest={(p) => setSelectedService({ name: p.role, price: p.price, proName: p.name, proId: p.id })}
+                  onChat={(p) => onChat(p.id, p.name)}
+                  onQuickTip={(p) => { haptics.light(); setSelectedQuickTip({ role: p.role, name: p.name, tip: getImprovementTip(p.role) }); }}
+                  onSave={(p) => { haptics.success(); alert(`🔖 Swipe Saved: Verified Expert "${p.name}" has been bookmarked to your favorites!`); }}
+                  onHide={(p) => { haptics.heavy(); setHiddenProIds(prev => [...prev, p.id]); alert(`👁️ Swipe Hidden: "${p.name}" is now hidden from your active recommendations.`); }}
+                />
             ))}
           </div>
           )
