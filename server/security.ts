@@ -10,19 +10,6 @@ import crypto from "crypto";
  *  - rateLimit: simple in-memory fixed-window limiter.
  *  - securityHeaders: a few safe defaults that do not break iframe previews.
  */
-// Replace the middleware logic to allow everything directly:
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  return next();
-}
-
-export function rateLimit(req: Request, res: Response, next: NextFunction) {
-  return next();
-}
-
-export function securityHeaders(req: Request, res: Response, next: NextFunction) {
-  return next();
-}
-
 export interface AuthedRequest extends Request {
   uid?: string;
   userEmail?: string;
