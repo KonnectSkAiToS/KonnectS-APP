@@ -6,10 +6,46 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
-import { LogIn, UserPlus, HelpCircle, ArrowLeft, Eye, EyeOff, Mail, Lock, User, Phone, Calendar, Heart, ShieldCheck, Apple, CheckCircle2, Fingerprint, ScanFace, FileText, Info, Compass } from 'lucide-react';
+import { type LucideIcon, LogIn, UserPlus, HelpCircle, ArrowLeft, Eye, EyeOff, Mail, Lock, User, Phone, Calendar, Heart, ShieldCheck, Apple, CheckCircle2, Fingerprint, ScanFace, FileText, Info, Compass } from 'lucide-react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db, firebaseConfig } from '../lib/firebase';
 import { haptics } from '../utils/haptics';
+
+/** Password input with its own show/hide toggle (used for both password fields on sign-up). */
+function PasswordField({ name, placeholder, value, onChange, icon: Icon, autoComplete }: {
+  name: string;
+  placeholder: string;
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  icon: LucideIcon;
+  autoComplete: string;
+}) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="relative">
+      <Icon size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+      <input
+        name={name}
+        type={visible ? 'text' : 'password'}
+        placeholder={placeholder}
+        value={value}
+        onChange={onChange}
+        required
+        autoComplete={autoComplete}
+        className="w-full pl-11 pr-12 py-3 bg-slate-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand font-bold"
+      />
+      <button
+        type="button"
+        onClick={() => setVisible(v => !v)}
+        aria-label={visible ? 'Hide password' : 'Show password'}
+        aria-pressed={visible}
+        className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+      >
+        {visible ? <EyeOff size={16} /> : <Eye size={16} />}
+      </button>
+    </div>
+  );
+}
 
 type AuthMode = 'gateway' | 'login' | 'signup' | 'forgot' | 'forgot-success' | 'find-account' | 'results' | 'verify-account' | 'otp-verification';
 
@@ -17,6 +53,7 @@ export function LoginView() {
   const { signIn, simulateOAuthSignIn, emailSignIn, emailSignUp, resetPassword } = useAuth();
   const [mode, setMode] = useState<AuthMode>('gateway');
   const [showPass, setShowPass] = useState(false);
+  const [signupStep, setSignupStep] = useState<1 | 2>(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [foundAccounts, setFoundAccounts] = useState<any[]>([]);
@@ -46,6 +83,14 @@ export function LoginView() {
     dob: '',
     gender: ''
   });
+
+  // Leaving the sign-up flow starts it fresh next time (the OTP screen keeps step 2 so "back" returns to it).
+  // Done while rendering (React's recommended "adjust state on prop change" pattern) rather than in an effect.
+  const [prevMode, setPrevMode] = useState<AuthMode>(mode);
+  if (mode !== prevMode) {
+    setPrevMode(mode);
+    if (mode !== 'signup' && mode !== 'otp-verification') setSignupStep(1);
+  }
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
@@ -150,6 +195,22 @@ export function LoginView() {
         localStorage.setItem('lastUserEmail', finalEmail);
         localStorage.setItem('lastUserPass', formData.password);
       } else if (mode === 'signup') {
+        if (signupStep === 1) {
+          // Step 1 only validates the account details, then moves on to the profile step.
+          if (formData.password.length < 6) {
+            throw new Error("Password must be at least 6 characters.");
+          }
+          if (formData.password !== formData.confirmPassword) {
+            throw new Error("Passwords do not match");
+          }
+          setFormData(prev => ({
+            ...prev,
+            username: prev.username || `${prev.firstName}${prev.lastName}`.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20)
+          }));
+          setSignupStep(2);
+          haptics.light();
+          return;
+        }
         if (!agreeTerms) {
           throw new Error("You must agree to the Terms and Conditions of service.");
         }
@@ -683,7 +744,12 @@ export function LoginView() {
             >
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center space-x-3">
-                  <button type="button" onClick={() => setMode('gateway')} className="p-2 bg-slate-50 rounded-xl hover:bg-slate-100 transition-colors">
+                  <button
+                    type="button"
+                    aria-label="Back"
+                    onClick={() => { setError(null); if (signupStep === 2) setSignupStep(1); else setMode('gateway'); }}
+                    className="p-2 bg-slate-50 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer"
+                  >
                     <ArrowLeft size={18} />
                   </button>
                   <h1 className="text-xl font-black tracking-tight">New Account</h1>
@@ -697,133 +763,182 @@ export function LoginView() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <input name="firstName" placeholder="First Name" value={formData.firstName} onChange={handleChange} required className="px-4 py-3 bg-slate-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand font-bold" />
-                <input name="lastName" placeholder="Last Name" value={formData.lastName} onChange={handleChange} required className="px-4 py-3 bg-slate-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand font-bold" />
-              </div>
-
-              <div className="space-y-3">
-                <div className="relative">
-                  <User size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input name="username" placeholder="Username" value={formData.username} onChange={handleChange} required className="w-full pl-11 pr-4 py-3 bg-slate-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand font-bold" />
+              {/* Progress */}
+              <div className="space-y-1.5" aria-label={`Step ${signupStep} of 2`}>
+                <div className="flex gap-2">
+                  <div className="h-1 flex-1 rounded-full bg-indigo-600" />
+                  <div className={`h-1 flex-1 rounded-full transition-colors ${signupStep === 2 ? 'bg-indigo-600' : 'bg-slate-200'}`} />
                 </div>
-                <div className="relative">
-                  <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input name="email" type="email" placeholder="Email Address" value={formData.email} onChange={handleChange} required className="w-full pl-11 pr-4 py-3 bg-slate-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand font-bold" />
-                </div>
-                <div className="relative">
-                  <Phone size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input name="mobileNumber" type="tel" placeholder="Mobile (e.g. +44...)" value={formData.mobileNumber} onChange={handleChange} required className="w-full pl-11 pr-4 py-3 bg-slate-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand font-bold" />
-                </div>
-                
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="relative">
-                    <Calendar size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input name="dob" type="date" value={formData.dob} onChange={handleChange} required className="w-full pl-11 pr-4 py-3 bg-slate-50 rounded-xl text-[10px] outline-none focus:ring-2 focus:ring-brand font-bold" />
-                  </div>
-                  <div className="relative">
-                    <Heart size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <select name="gender" value={formData.gender} onChange={handleChange} required className="w-full pl-11 pr-4 py-3 bg-slate-50 rounded-xl text-[10px] outline-none focus:ring-2 focus:ring-brand font-bold appearance-none">
-                       <option value="">Gender</option>
-                       <option value="male">Male</option>
-                       <option value="female">Female</option>
-                       <option value="other">Other</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="relative">
-                  <Lock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input name="password" type={showPass ? 'text' : 'password'} placeholder="Password" value={formData.password} onChange={handleChange} required className="w-full pl-11 pr-11 py-3 bg-slate-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand font-bold" />
-                </div>
-                <div className="relative">
-                  <ShieldCheck size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input name="confirmPassword" type={showPass ? 'text' : 'password'} placeholder="Confim Password" value={formData.confirmPassword} onChange={handleChange} required className="w-full pl-11 pr-4 py-3 bg-slate-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand font-bold" />
-                </div>
-              </div>
-
-              {/* OTP DELIVERY PREFERENCE SELECTOR */}
-              <div className="p-3.5 bg-slate-50/90 rounded-2xl border border-slate-200/80 space-y-2 text-left">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
-                    Send Verification OTP Code To:
-                  </span>
-                  <span className="text-[9px] font-extrabold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full uppercase">
-                    Verification
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => { setOtpChannel('mobile'); haptics.light(); }}
-                    className={`py-2.5 px-3 rounded-xl border text-[11px] font-extrabold flex items-center justify-center space-x-2 transition-all cursor-pointer ${
-                      otpChannel === 'mobile'
-                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-600/20'
-                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    <Phone size={14} />
-                    <span>Mobile SMS</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => { setOtpChannel('email'); haptics.light(); }}
-                    className={`py-2.5 px-3 rounded-xl border text-[11px] font-extrabold flex items-center justify-center space-x-2 transition-all cursor-pointer ${
-                      otpChannel === 'email'
-                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-600/20'
-                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    <Mail size={14} />
-                    <span>Email Address</span>
-                  </button>
-                </div>
-
-                <p className="text-[9.5px] text-slate-400 font-bold leading-tight pt-0.5">
-                  {otpChannel === 'mobile' 
-                    ? `📱 OTP code will be sent via SMS text message to ${formData.mobileNumber || 'your mobile phone'}`
-                    : `📧 OTP code will be sent via email message to ${formData.email || 'your email address'}`}
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                  Step {signupStep} of 2 · {signupStep === 1 ? 'Your account' : 'Your profile & verification'}
                 </p>
               </div>
 
-              <div className="space-y-2.5 p-3.5 bg-slate-50 rounded-2xl border border-slate-150 text-left">
-                <div className="flex items-start space-x-2.5">
-                  <input
-                    id="agreeTerms"
-                    type="checkbox"
-                    checked={agreeTerms}
-                    onChange={(e) => setAgreeTerms(e.target.checked)}
-                    required
-                    className="mt-0.5 accent-brand cursor-pointer shrink-0"
-                  />
-                  <label htmlFor="agreeTerms" className="text-[10px] font-bold text-slate-600 leading-normal select-none">
-                    I accept the{' '}
+              {signupStep === 1 && (
+                <>
+                  {/* One-tap sign-up */}
+                  <div className="space-y-2.5">
                     <button
                       type="button"
-                      onClick={() => setShowTermsModal(true)}
-                      className="text-brand hover:underline font-extrabold text-blue-600 dark:text-blue-400"
+                      onClick={() => handleSocialLogin('google')}
+                      disabled={loading}
+                      className="w-full flex items-center justify-center gap-3 py-3 bg-white border border-slate-200 rounded-xl text-xs font-extrabold text-slate-700 hover:bg-slate-50 active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
                     >
-                      Terms & Conditions and Privacy Policy
-                    </button>{' '}
-                    (App is strictly for communication purposes; ultimate decisions remain with individual users).
-                  </label>
-                </div>
+                      <img src="https://www.google.com/favicon.ico" className="w-4 h-4" alt="" />
+                      <span>Continue with Google</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSocialLogin('apple')}
+                      disabled={loading}
+                      className="w-full flex items-center justify-center gap-3 py-3 bg-black border border-black rounded-xl text-xs font-extrabold text-white hover:bg-slate-900 active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
+                    >
+                      <Apple size={16} className="fill-white" />
+                      <span>Continue with Apple</span>
+                    </button>
+                  </div>
 
-                <div className="flex items-start space-x-2.5 pt-2 border-t border-slate-200/60">
-                  <input
-                    id="agreeEmailContact"
-                    type="checkbox"
-                    checked={agreeEmailContact}
-                    onChange={(e) => setAgreeEmailContact(e.target.checked)}
-                    className="mt-0.5 accent-brand cursor-pointer shrink-0"
-                  />
-                  <label htmlFor="agreeEmailContact" className="text-[10px] font-bold text-slate-600 leading-normal select-none">
-                    I agree to receive future email communications, account updates, and notices from KonnectS for communication purposes.
-                  </label>
-                </div>
-              </div>
+                  <div className="relative py-1">
+                    <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-100"></div></div>
+                    <div className="relative flex justify-center text-[10px] uppercase tracking-widest"><span className="bg-white px-2 text-slate-400 font-bold">or sign up with email</span></div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <input name="firstName" placeholder="First Name" autoComplete="given-name" value={formData.firstName} onChange={handleChange} required className="min-w-0 px-4 py-3 bg-slate-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand font-bold" />
+                    <input name="lastName" placeholder="Last Name" autoComplete="family-name" value={formData.lastName} onChange={handleChange} required className="min-w-0 px-4 py-3 bg-slate-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand font-bold" />
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="relative">
+                      <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input name="email" type="email" placeholder="Email Address" autoComplete="email" value={formData.email} onChange={handleChange} required className="w-full pl-11 pr-4 py-3 bg-slate-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand font-bold" />
+                    </div>
+                    <div className="relative">
+                      <Phone size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input name="mobileNumber" type="tel" placeholder="Mobile (e.g. +44...)" autoComplete="tel" value={formData.mobileNumber} onChange={handleChange} required className="w-full pl-11 pr-4 py-3 bg-slate-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand font-bold" />
+                    </div>
+                    <PasswordField name="password" placeholder="Password" value={formData.password} onChange={handleChange} icon={Lock} autoComplete="new-password" />
+                    <PasswordField name="confirmPassword" placeholder="Confirm Password" value={formData.confirmPassword} onChange={handleChange} icon={ShieldCheck} autoComplete="new-password" />
+                  </div>
+                </>
+              )}
+
+              {signupStep === 2 && (
+                <>
+                  <div className="space-y-3">
+                    <div className="relative">
+                      <User size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input name="username" placeholder="Choose a username" autoComplete="username" value={formData.username} onChange={handleChange} required className="w-full pl-11 pr-4 py-3 bg-slate-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand font-bold" />
+                    </div>
+
+                    <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-4">
+                      <div className="min-w-0 space-y-1.5">
+                        <label htmlFor="dob" className="block pl-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">Date of birth</label>
+                        <div className="relative">
+                          <Calendar size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                          <input id="dob" name="dob" type="date" autoComplete="bday" value={formData.dob} onChange={handleChange} required className="w-full min-w-0 pl-11 pr-3 py-3 bg-slate-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand font-bold" />
+                        </div>
+                      </div>
+                      <div className="min-w-0 space-y-1.5">
+                        <label htmlFor="gender" className="block pl-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">Gender</label>
+                        <div className="relative">
+                          <Heart size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                          <select id="gender" name="gender" value={formData.gender} onChange={handleChange} required className="w-full min-w-0 pl-11 pr-3 py-3 bg-slate-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand font-bold appearance-none">
+                            <option value="">Select</option>
+                            <option value="male">Male</option>
+                            <option value="female">Female</option>
+                            <option value="other">Other</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* OTP DELIVERY PREFERENCE SELECTOR */}
+                  <div className="p-3.5 bg-slate-50/90 rounded-2xl border border-slate-200/80 space-y-2 text-left">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                        Send Verification OTP Code To:
+                      </span>
+                      <span className="text-[9px] font-extrabold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full uppercase">
+                        Verification
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => { setOtpChannel('mobile'); haptics.light(); }}
+                        className={`py-2.5 px-3 rounded-xl border text-[11px] font-extrabold flex items-center justify-center space-x-2 transition-all cursor-pointer ${
+                          otpChannel === 'mobile'
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-600/20'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <Phone size={14} />
+                        <span>Mobile SMS</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => { setOtpChannel('email'); haptics.light(); }}
+                        className={`py-2.5 px-3 rounded-xl border text-[11px] font-extrabold flex items-center justify-center space-x-2 transition-all cursor-pointer ${
+                          otpChannel === 'email'
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-600/20'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <Mail size={14} />
+                        <span>Email Address</span>
+                      </button>
+                    </div>
+
+                    <p className="text-[10px] text-slate-400 font-medium leading-tight pt-0.5">
+                      {otpChannel === 'mobile' 
+                        ? `OTP code will be sent via SMS text message to ${formData.mobileNumber || 'your mobile phone'}`
+                        : `OTP code will be sent via email message to ${formData.email || 'your email address'}`}
+                    </p>
+                  </div>
+
+                  {/* Terms: plain rows, no heavy box */}
+                  <div className="space-y-3 text-left">
+                    <label htmlFor="agreeTerms" className="flex items-start gap-3 cursor-pointer select-none">
+                      <input
+                        id="agreeTerms"
+                        type="checkbox"
+                        checked={agreeTerms}
+                        onChange={(e) => setAgreeTerms(e.target.checked)}
+                        required
+                        className="mt-0.5 h-4 w-4 shrink-0 rounded accent-brand cursor-pointer"
+                      />
+                      <span className="text-[11px] leading-relaxed text-slate-500 font-medium">
+                        I accept the{' '}
+                        <button
+                          type="button"
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowTermsModal(true); }}
+                          className="text-brand font-semibold hover:underline cursor-pointer"
+                        >
+                          Terms & Conditions and Privacy Policy
+                        </button>{' '}
+                        (App is strictly for communication purposes; ultimate decisions remain with individual users).
+                      </span>
+                    </label>
+
+                    <label htmlFor="agreeEmailContact" className="flex items-start gap-3 cursor-pointer select-none">
+                      <input
+                        id="agreeEmailContact"
+                        type="checkbox"
+                        checked={agreeEmailContact}
+                        onChange={(e) => setAgreeEmailContact(e.target.checked)}
+                        className="mt-0.5 h-4 w-4 shrink-0 rounded accent-brand cursor-pointer"
+                      />
+                      <span className="text-[11px] leading-relaxed text-slate-500 font-medium">
+                        I agree to receive future email communications, account updates, and notices from KonnectS for communication purposes.
+                      </span>
+                    </label>
+                  </div>
+                </>
+              )}
 
               <AnimatePresence>
                 {error && (
@@ -845,9 +960,9 @@ export function LoginView() {
               <button 
                 type="submit" 
                 disabled={loading}
-                className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-slate-900/10 active:scale-95 transition-all text-xs cursor-pointer"
+                className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-slate-900/10 active:scale-95 transition-all text-xs cursor-pointer disabled:opacity-60"
               >
-                {loading ? 'Processing...' : 'Continue to OTP Verification'}
+                {loading ? 'Processing...' : signupStep === 1 ? 'Continue' : 'Continue to OTP Verification'}
               </button>
 
               <p className="text-center text-[10px] font-bold text-slate-400 uppercase tracking-widest pt-2">
@@ -1353,7 +1468,7 @@ export function LoginView() {
         )}
       </AnimatePresence>
 
-      <p className="fixed bottom-10 text-[10px] text-slate-300 font-black uppercase tracking-[0.2em] italic">
+      <p className="mt-8 text-center text-[10px] text-slate-300 font-black uppercase tracking-[0.2em] italic">
         KonnectS • Encrypted & Secure
       </p>
     </div>
