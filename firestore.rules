@@ -133,7 +133,8 @@ service cloud.firestore {
           'availabilityStatus', 'appLanguage', 'location',
           'priceDropNotificationsEnabled', 'quietHoursEnabled', 'quietHoursStart',
           'quietHoursEnd', 'accessibilityFontScale', 'accessibilityHighContrast',
-          'darkMode', 'skills', 'verificationPhoto', 'loginCount'
+          'darkMode', 'skills', 'verificationPhoto', 'loginCount',
+          'workHistory', 'pastProjects', 'certifications', 'hasUploadedDocs'
         ]) &&
         pointsChangeIsSafe() &&
         loginCountIsSafe() &&
@@ -262,12 +263,11 @@ service cloud.firestore {
 
       allow update: if isSignedIn() &&
                     isValidBooking(incoming()) &&
-                    incoming().createdAt == existing().createdAt &&
                     incoming().customerId == existing().customerId &&
                     (
                       // Customer actions
                       (isOwner(existing().customerId) &&
-                       changed().hasOnly(['status', 'description', 'updatedAt', 'suggestedPrice', 'autoRenew'])) ||
+                       changed().hasOnly(['status', 'description', 'updatedAt', 'suggestedPrice', 'autoRenew', 'createdAt'])) ||
                       // A worker claiming an unassigned job (accept or counter-offer)
                       (isWorkerUser() &&
                        existing().get('workerId', null) == null &&

@@ -32,6 +32,7 @@
 - Any signed-in user can still `get` another user's profile document by uid (needed by chat/listings). Splitting a
   `public_profiles` collection (name, avatar, rating) from private fields is the next step.
 - `rewardsPoints` is bounded per update (+100) but is still client-written; move points/referrals/premium/payments to a trusted server.
+- Referral claims in ProfileView (+150 points, +£10 discount) now fail on purpose: they were client-granted rewards. Move them server-side.
 - Disputes are advisory only; no payment/refund backend exists in this repo.
 - The Google Sheets sign-up logging (`sheetsService`) is now blocked by the `admin` rules; remove it or move it server-side.
 - A stale copy of the project lives in `konnects/` (its tests also run in CI); consider deleting it. `fix.ts`/`fix_v4.ts` are one-off scripts.

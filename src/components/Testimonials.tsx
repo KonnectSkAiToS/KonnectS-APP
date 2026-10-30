@@ -49,7 +49,7 @@ interface TestimonialsProps {
 }
 
 export function Testimonials({ providerId, providerName, productId, productName, onReviewAdded }: TestimonialsProps) {
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState(true);
   const [rating, setRating] = useState(5);
@@ -116,6 +116,7 @@ export function Testimonials({ providerId, providerName, productId, productName,
         rating,
         comment: comment.trim(),
         isVerified: true,
+        userId: user?.uid || profile?.uid || '',
       };
 
       if (productId) {
