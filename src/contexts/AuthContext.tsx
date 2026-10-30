@@ -10,6 +10,37 @@ import { auth, db, googleProvider, handleFirestoreError, OperationType } from '.
 import { UserProfile } from '../types';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { appendUserToGoogleSheets } from '../lib/sheetsService';
+import { resolveLoginIdentifier, ensureLoginIndex } from '../lib/loginIndex';
+import { ensurePublicProfile } from '../lib/publicProfile';
+import { clearUserLocalData } from '../utils/indexedDB';
+
+// Demo accounts / simulated logins are for development only. Enable explicitly in other builds.
+const isDemoModeEnabled = () =>
+  Boolean((import.meta as any).env?.DEV) || (import.meta as any).env?.VITE_ENABLE_DEMO_ACCOUNTS === 'true';
+const isSimulatedLoginDisabled = () => (import.meta as any).env?.VITE_DISABLE_SIMULATED_LOGIN === 'true';
+
+// Firestore rejects `undefined` field values, so drop them before writing.
+function stripUndefined<T extends Record<string, any>>(obj: T): T {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as T;
+}
+
+// Per-device random credentials for the simulated/guest sign-in (no shared, guessable password).
+function getSimulatedCredentials(provider: string): { email: string; pass: string } {
+  const key = `konnects_sim_cred_${provider}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed?.email && parsed?.pass) return parsed;
+    }
+  } catch { /* fall through and generate */ }
+  const bytes = new Uint8Array(18);
+  crypto.getRandomValues(bytes);
+  const rand = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  const creds = { email: `${provider}-${rand.slice(0, 10)}@konnects.dev`, pass: `Sim!${rand}` };
+  try { localStorage.setItem(key, JSON.stringify(creds)); } catch { /* storage unavailable */ }
+  return creds;
+}
 
 export const MOCK_PROFILES_MAP: Record<string, any> = {
   'alex.rivera@konnects.co.uk': {
@@ -84,10 +115,17 @@ export const MOCK_PROFILES_MAP: Record<string, any> = {
   }
 };
 
-// Helper to push user changes to Supabase
+// Helper to push user changes to Supabase (own profile only; sensitive fields are never mirrored)
+const SENSITIVE_PROFILE_KEYS = ['documents', 'verificationPhoto', 'dateOfBirth', 'mobileNumber'];
+
 export async function syncProfileToSupabase(profileData: UserProfile) {
   if (!isSupabaseConfigured() || !supabase) return;
+  if (!profileData?.uid || profileData.uid === 'guest-user') return;
   try {
+    const safeData: Record<string, any> = { ...profileData };
+    for (const key of SENSITIVE_PROFILE_KEYS) delete safeData[key];
+
+    // created_at is intentionally not sent: it keeps its original database default on upsert.
     const { error: upsertErr } = await supabase.from('users').upsert({
       uid: profileData.uid,
       email: profileData.email,
@@ -95,53 +133,14 @@ export async function syncProfileToSupabase(profileData: UserProfile) {
       rewards_points: Number(profileData.rewardsPoints || 0),
       carbon_savings_kg: Number(profileData.carbonSavingsKg || 0),
       is_worker: Boolean(profileData.isWorker),
-      created_at: new Date().toISOString(),
-      raw_data: profileData
+      raw_data: safeData
     } as any);
 
     if (upsertErr) {
       console.warn('[Dual DB Sync] Supabase profile sync error:', upsertErr.message);
-    } else {
-      console.log('[Dual DB Sync] Supabase users table updated in real-time');
     }
   } catch (error) {
     console.warn('[Dual DB Sync] Supabase profile Sync exception:', error);
-  }
-}
-
-// Dual Session authentications helper
-export async function ensureDualAuthSession(email: string, uid: string) {
-  if (!isSupabaseConfigured() || !supabase) return;
-  const password = 'dualSecurePass_@@' + uid;
-  try {
-    // Attempt dual auth log in
-    const { error: signInErr } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    
-    // If user does not exist yet, sign them up
-    if (signInErr && (signInErr.message.includes('Invalid login credentials') || signInErr.message.includes('Email not confirmed') || signInErr.message.includes('not found') || signInErr.status === 400)) {
-      const { error: signUpErr } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            uid,
-            displayName: email.split('@')[0],
-          }
-        }
-      });
-      if (!signUpErr) {
-        console.log('[Dual Auth] Seamlessly registered matching account on Supabase Auth platform.');
-        // Sign in immediately
-        await supabase.auth.signInWithPassword({ email, password });
-      }
-    } else if (!signInErr) {
-      console.log('[Dual Auth] Authenticated flawlessly to Supabase Auth. Dual identities aligned.');
-    }
-  } catch (err) {
-    console.warn('[Dual Auth] Non-blocking exception during dual-authentication routine:', err);
   }
 }
 
@@ -152,6 +151,7 @@ export async function migrateLocalCacheToSupabase(uid: string) {
   if (localStorage.getItem(migrationDoneKey) === 'true') return;
 
   console.log('[Migration System] First-time login detected. Migrating local cache to Supabase PostgreSQL...');
+  let hadError = false;
   
   try {
     // 1. Assists & Rewards Points migration
@@ -167,14 +167,13 @@ export async function migrateLocalCacheToSupabase(uid: string) {
           const { error } = await supabase.from('bookings').upsert({
             id: ride.id || `ride-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
             service_type: 'ride-share',
-            user_id: uid,
-            driver_name: ride.driverName || 'Cab Driver',
+            customer_id: uid,
             status: ride.status || 'scheduled',
             price: Number(ride.price || 15.00),
             created_at: ride.createdAt || new Date().toISOString(),
             raw_data: ride
           } as any);
-          if (error) console.warn('[Migration Warning] Sync scheduled ride failure:', error.message);
+          if (error) { hadError = true; console.warn('[Migration Warning] Sync scheduled ride failure:', error.message); }
         }
       }
     }
@@ -188,20 +187,24 @@ export async function migrateLocalCacheToSupabase(uid: string) {
           const { error } = await supabase.from('bookings').upsert({
             id: task.id || `service-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
             service_type: task.serviceType || 'verified-service',
-            user_id: uid,
+            customer_id: uid,
             status: task.status || 'pending',
             price: Number(task.price || 25.0),
             created_at: task.createdAt || new Date().toISOString(),
             raw_data: task
           } as any);
-          if (error) console.warn('[Migration Warning] Sync task booking failure:', error.message);
+          if (error) { hadError = true; console.warn('[Migration Warning] Sync task booking failure:', error.message); }
         }
       }
     }
 
-    // Finished
-    localStorage.setItem(migrationDoneKey, 'true');
-    console.log('[Migration System] Hybrid database cache migration completed.');
+    // Finished. Only remember completion if nothing failed, so a failed run is retried next time.
+    if (!hadError) {
+      localStorage.setItem(migrationDoneKey, 'true');
+      console.log('[Migration System] Hybrid database cache migration completed.');
+    } else {
+      console.warn('[Migration System] Some records failed to migrate; will retry on next sign-in.');
+    }
   } catch (err) {
     console.warn('[Migration System] Error in cache migration routine:', err);
   }
@@ -250,10 +253,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [profile]);
 
-  // Handle seamless dual auth session registration and automatic cache migration
+  // Automatic cache migration (Supabase authenticates with the Firebase ID token; no second password)
   useEffect(() => {
     if (user) {
-      ensureDualAuthSession(user.email || '', user.uid);
       migrateLocalCacheToSupabase(user.uid);
     }
   }, [user]);
@@ -274,10 +276,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             
             if (!docSnap.exists()) {
               try {
+                // Demo personas only exist in development / when explicitly enabled.
                 const emailKey = (user.email || '').toLowerCase().trim();
-                const mockFields = MOCK_PROFILES_MAP[emailKey] || {};
-                
-                const newProfile: UserProfile = {
+                const mockFields = isDemoModeEnabled() ? (MOCK_PROFILES_MAP[emailKey] || {}) : {};
+
+                // Trust fields (rating, reviewCount, verification) are never client-writable.
+                const newProfile = stripUndefined({
                   uid: user.uid,
                   email: user.email || '',
                   username: mockFields.username || user.displayName || user.email?.split('@')[0] || 'User',
@@ -288,8 +292,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   isWorkerMode: mockFields.isWorkerMode || false,
                   workerType: mockFields.workerType,
                   hourlyRate: mockFields.hourlyRate,
-                  rating: mockFields.rating,
-                  reviewCount: mockFields.reviewCount,
                   bio: mockFields.bio,
                   mobileNumber: mockFields.mobileNumber || '',
                   rewardsPoints: 100,
@@ -297,7 +299,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   carbonSavingsKg: 0,
                   earnedBadges: [],
                   createdAt: serverTimestamp(),
-                };
+                }) as unknown as UserProfile;
                 await setDoc(docRef, newProfile);
               } catch (error) {
                 console.warn("[AuthContext] Async profile auto-creation failed (possibly offline or read-only/rules block):", error);
@@ -330,17 +332,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         // Set up real-time listener for profile
+        let loginIndexed = false;
         unsubscribeProfile = onSnapshot(docRef, (snap) => {
           if (snap.exists()) {
             const profileData = snap.data() as UserProfile;
             setProfile(profileData);
+            if (!loginIndexed) {
+              loginIndexed = true;
+              ensureLoginIndex(profileData as any);
+            }
+            ensurePublicProfile(profileData as any);
             localStorage.setItem(`konnects_profile_cache_${user.uid}`, JSON.stringify(profileData));
             
             // Sync user profile data to Service Worker cache via API endpoint
             fetch('/api/offline/profile', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(profileData)
+              body: JSON.stringify((() => { const { documents, verificationPhoto, dateOfBirth, ...rest } = profileData as any; return rest; })())
             }).catch(e => console.warn('Bypassed SW profile cache sync:', e));
           }
         }, (error) => {
@@ -391,13 +399,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const updateProfile = async (updates: Partial<UserProfile>) => {
     if (user && profile?.uid && profile.uid !== 'guest-user') {
+      const previous = profile;
       const updated = { ...profile, ...updates };
       setProfile(updated as UserProfile);
       localStorage.setItem(`konnects_profile_cache_${user.uid}`, JSON.stringify(updated));
       try {
-        await setDoc(doc(db, 'users', user.uid), updates, { merge: true });
+        await setDoc(doc(db, 'users', user.uid), stripUndefined(updates as Record<string, any>), { merge: true });
+        if ('username' in updates || 'mobileNumber' in updates) {
+          ensureLoginIndex(updated as any);
+        }
       } catch (err) {
-        console.warn('[AuthContext] setDoc profile update notice:', err);
+        // The write was rejected (rules/offline). Roll the UI back so it never shows unsaved data as saved.
+        console.warn('[AuthContext] Profile update failed; reverting local state:', err);
+        setProfile(previous);
+        localStorage.setItem(`konnects_profile_cache_${user.uid}`, JSON.stringify(previous));
       }
     } else {
       const current = profile || DEFAULT_GUEST_PROFILE;
@@ -453,9 +468,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           handleFirestoreError(error, OperationType.CREATE, `users/${user.uid}`);
         }
       } else {
-        await updateDoc(docRef, {
-          loginCount: increment(1)
-        });
+        try {
+          await updateDoc(docRef, {
+            loginCount: increment(1)
+          });
+        } catch (countErr) {
+          console.warn('[AuthContext] Could not bump loginCount (non-fatal):', countErr);
+        }
       }
 
       if (providerName === 'google') {
@@ -477,52 +496,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const emailSignIn = async (identifier: string, pass: string) => {
-    try {
-      let resolvedEmail = identifier.trim().toLowerCase();
-      
-      // If identifier doesn't look like an email (doesn't contain '@'), try to resolve by username or mobileNumber
-      if (!resolvedEmail.includes('@')) {
-        const qUsername = query(collection(db, 'users'), where('username', '==', resolvedEmail));
-        const snapUsername = await getDocs(qUsername);
-        
-        if (!snapUsername.empty) {
-          resolvedEmail = snapUsername.docs[0].data().email;
-        } else {
-          // If no username found, try mobileNumber
-          const qMobile = query(collection(db, 'users'), where('mobileNumber', '==', resolvedEmail));
-          const snapMobile = await getDocs(qMobile);
-          if (!snapMobile.empty) {
-            resolvedEmail = snapMobile.docs[0].data().email;
-          }
-        }
-      }
-      
-      // Check if it's one of the 5 demo accounts
-      const isDemoAccount = [
-        'alex.rivera@konnects.co.uk',
-        'sarah.jenkins@konnects.co.uk',
-        'marcus.thorne@konnects.co.uk',
-        'elena.gilbert@konnects.co.uk',
-        'david.okafor@konnects.co.uk'
-      ].includes(resolvedEmail);
+    // Resolve username / mobile number to an email via the login index (single-document lookup).
+    const resolvedEmail = (await resolveLoginIdentifier(identifier)) || identifier.trim().toLowerCase();
 
-      if (isDemoAccount) {
-        try {
-          await signInWithEmailAndPassword(auth, resolvedEmail, pass);
-        } catch (authErr: any) {
-          // If user doesn't exist, register them on-the-fly and sign in!
-          if (authErr.code === 'auth/user-not-found' || authErr.code === 'auth/invalid-credential' || authErr.code === 'auth/wrong-password') {
-            await createUserWithEmailAndPassword(auth, resolvedEmail, pass);
-          } else {
-            throw authErr;
-          }
-        }
-      } else {
+    const demoEmails = [
+      'alex.rivera@konnects.co.uk',
+      'sarah.jenkins@konnects.co.uk',
+      'marcus.thorne@konnects.co.uk',
+      'elena.gilbert@konnects.co.uk',
+      'david.okafor@konnects.co.uk'
+    ];
+
+    // Demo personas are only auto-registered in development builds (or when explicitly enabled),
+    // so nobody can claim a "verified-looking" demo identity on a production deployment.
+    if (isDemoModeEnabled() && demoEmails.includes(resolvedEmail)) {
+      try {
         await signInWithEmailAndPassword(auth, resolvedEmail, pass);
+      } catch (authErr: any) {
+        if (authErr.code === 'auth/user-not-found' || authErr.code === 'auth/invalid-credential' || authErr.code === 'auth/wrong-password') {
+          try {
+            await createUserWithEmailAndPassword(auth, resolvedEmail, pass);
+          } catch (createErr: any) {
+            // The account already exists, so the original failure was simply a wrong password.
+            if (createErr?.code === 'auth/email-already-in-use') throw authErr;
+            throw createErr;
+          }
+        } else {
+          throw authErr;
+        }
       }
-    } catch (error: any) {
-      throw error;
+      return;
     }
+
+    await signInWithEmailAndPassword(auth, resolvedEmail, pass);
   };
 
   const emailSignUp = async (data: Partial<UserProfile>, pass: string) => {
@@ -551,6 +557,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       };
       try {
         await setDoc(docRef, newProfile);
+        ensureLoginIndex(newProfile as any);
       } catch (firestoreError) {
         handleFirestoreError(firestoreError, OperationType.CREATE, `users/${user.uid}`);
       }
@@ -568,8 +575,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const simulateOAuthSignIn = async (providerName: string) => {
-    const email = `${providerName.toLowerCase()}-tester@konnects.dev`;
-    const pass = `${providerName.charAt(0).toUpperCase() + providerName.slice(1)}Tester123!`;
+    if (isSimulatedLoginDisabled()) {
+      throw new Error('Simulated sign-in is disabled in this build.');
+    }
+    // Unique random credentials per device: there is no shared, guessable "tester" password.
+    const { email, pass } = getSimulatedCredentials(providerName.toLowerCase().replace(/[^a-z0-9]/g, '') || 'guest');
     const username = providerName.toLowerCase() === 'guest' ? 'Guest Explorer' : `${providerName.charAt(0).toUpperCase() + providerName.slice(1)} Tester`;
     
     try {
@@ -614,8 +624,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = async () => {
     try {
+      const uid = auth.currentUser?.uid;
       await signOut(auth);
       setGoogleAccessToken(null);
+      clearUserLocalData();
+      if (uid) localStorage.removeItem(`konnects_profile_cache_${uid}`);
     } catch (error: any) {
       // Logout errors are rare but should be handled gracefully
     }

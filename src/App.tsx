@@ -190,7 +190,7 @@ function AppContent() {
     const unsubBookings = startBookingNotificationListener(user.uid);
     const unsubRides = listenToRideLocalChanges();
     const unsubScheduledChecker = startScheduledRideNotificationChecker();
-    const unsubDbSync = startRealtimeDbSync();
+    const unsubDbSync = startRealtimeDbSync(user.uid);
 
     return () => {
       unsubBookings();
@@ -328,7 +328,7 @@ function AppContent() {
       <ConflictResolutionModal />
 
       {/* Floating Report Issue Trigger */}
-      <div className="fixed right-6 bottom-40 z-45">
+      <div className="fixed right-6 bottom-40 z-[45]">
         <motion.button
           whileHover={{ scale: 1.08 }}
           whileTap={{ scale: 0.95 }}

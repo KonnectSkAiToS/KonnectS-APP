@@ -433,14 +433,18 @@ export function VerificationStatus({ onBack }: { onBack?: () => void }) {
           <ArrowRight size={14} />
         </button>
 
-        {/* MOCK/TEST AUTO-APPROVE (Highly descriptive for developers and reviewers to test the approved status instantly) */}
-        <button
-          onClick={handleInstantApprove}
-          className="w-full py-3 bg-gradient-to-r from-emerald-500/20 to-teal-500/20 hover:from-emerald-500/30 hover:to-teal-500/30 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 dark:border-emerald-800/40 text-[10px] font-black uppercase tracking-wider rounded-2xl cursor-pointer transition-all flex items-center justify-center gap-1.5 active:scale-95 shadow-sm"
-        >
-          <Star size={13} className="fill-emerald-500/20 animate-spin-slow" />
-          <span>Instant Mock Approved Profile (For Review & Testing)</span>
-        </button>
+        {(import.meta as any).env?.DEV && (
+          <>
+          {/* MOCK/TEST AUTO-APPROVE (Highly descriptive for developers and reviewers to test the approved status instantly) */}
+          <button
+            onClick={handleInstantApprove}
+            className="w-full py-3 bg-gradient-to-r from-emerald-500/20 to-teal-500/20 hover:from-emerald-500/30 hover:to-teal-500/30 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 dark:border-emerald-800/40 text-[10px] font-black uppercase tracking-wider rounded-2xl cursor-pointer transition-all flex items-center justify-center gap-1.5 active:scale-95 shadow-sm"
+          >
+            <Star size={13} className="fill-emerald-500/20 animate-spin-slow" />
+            <span>Instant Mock Approved Profile (For Review & Testing)</span>
+          </button>
+          </>
+        )}
       </div>
 
     </div>

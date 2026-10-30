@@ -1,5 +1,5 @@
-import { collection, onSnapshot, getDocs, doc, getDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { collection, onSnapshot, getDocs, doc, getDoc, query, where } from 'firebase/firestore';
+import { db, auth } from '../lib/firebase';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { 
   saveOfflineSyncItem, 
@@ -89,12 +89,14 @@ function getISOValue(val: any): string {
   }
 }
 
-// Helper to formulate high-level schema SQL commands that users can copy to create tables in Supabase
-export const SUPABASE_SQL_CREATOR_SCRIPT = `-- SUPABASE POSTGRESQL MERGED SCHEMA CREATION SCRIPT
--- Copy-paste this script into your Supabase SQL Editor (https://supabase.com)
--- to initialize tables with JSONB zero-loss support and indexed key matching.
+// Helper to formulate high-level schema SQL commands that users can copy to create tables in Supabase.
+// NOTE: Row Level Security is OWNER-SCOPED. It expects Supabase "Third-Party Auth" to be enabled for
+// Firebase (Dashboard > Authentication > Sign In / Providers > Third-Party Auth), so that the Firebase
+// user id is available as auth.jwt()->>'sub'. Shared tables (community_pulse) are read-only for clients.
+export const SUPABASE_SQL_CREATOR_SCRIPT = `-- SUPABASE POSTGRESQL MERGED SCHEMA CREATION SCRIPT (owner-scoped RLS)
+-- Prerequisite: enable Firebase under Authentication > Third-Party Auth in your Supabase project.
+-- Copy-paste this script into your Supabase SQL Editor (https://supabase.com).
 
--- 1. Create the Users Table
 CREATE TABLE IF NOT EXISTS public.users (
   uid TEXT PRIMARY KEY,
   email TEXT,
@@ -106,7 +108,6 @@ CREATE TABLE IF NOT EXISTS public.users (
   raw_data JSONB
 );
 
--- 2. Create the Bookings Table
 CREATE TABLE IF NOT EXISTS public.bookings (
   id TEXT PRIMARY KEY,
   customer_id TEXT,
@@ -118,7 +119,6 @@ CREATE TABLE IF NOT EXISTS public.bookings (
   raw_data JSONB
 );
 
--- 3. Create the Discussions Table
 CREATE TABLE IF NOT EXISTS public.discussions (
   id TEXT PRIMARY KEY,
   title TEXT,
@@ -129,7 +129,6 @@ CREATE TABLE IF NOT EXISTS public.discussions (
   raw_data JSONB
 );
 
--- 4. Create the Items Table (Marketplace)
 CREATE TABLE IF NOT EXISTS public.items (
   id TEXT PRIMARY KEY,
   title TEXT,
@@ -140,7 +139,6 @@ CREATE TABLE IF NOT EXISTS public.items (
   raw_data JSONB
 );
 
--- 5. Create the Community Pulse Table
 CREATE TABLE IF NOT EXISTS public.community_pulse (
   id TEXT PRIMARY KEY,
   title TEXT,
@@ -150,225 +148,238 @@ CREATE TABLE IF NOT EXISTS public.community_pulse (
   raw_data JSONB
 );
 
--- Enable Row Level Security (RLS) policies for secure reads
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bookings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.discussions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.community_pulse ENABLE ROW LEVEL SECURITY;
 
--- Expose simple SELECT policies for all authenticated users
-CREATE POLICY "Allow public select on tables" ON public.users FOR SELECT USING (true);
-CREATE POLICY "Allow public select on bookings" ON public.bookings FOR SELECT USING (true);
-CREATE POLICY "Allow public select on discussions" ON public.discussions FOR SELECT USING (true);
-CREATE POLICY "Allow public select on items" ON public.items FOR SELECT USING (true);
-CREATE POLICY "Allow public select on community_pulse" ON public.community_pulse FOR SELECT USING (true);
+-- users: a person can only read and write their own row
+CREATE POLICY "users_select_own" ON public.users FOR SELECT USING (uid = (SELECT auth.jwt()->>'sub'));
+CREATE POLICY "users_insert_own" ON public.users FOR INSERT WITH CHECK (uid = (SELECT auth.jwt()->>'sub'));
+CREATE POLICY "users_update_own" ON public.users FOR UPDATE USING (uid = (SELECT auth.jwt()->>'sub')) WITH CHECK (uid = (SELECT auth.jwt()->>'sub'));
 
--- Upsert capabilities policy for Service / Admin role syncing
-CREATE POLICY "Enable insert/update for sync role" ON public.users USING (true) WITH CHECK (true);
-CREATE POLICY "Enable insert/update for bookings" ON public.bookings USING (true) WITH CHECK (true);
-CREATE POLICY "Enable insert/update for discussions" ON public.discussions USING (true) WITH CHECK (true);
-CREATE POLICY "Enable insert/update for items" ON public.items USING (true) WITH CHECK (true);
-CREATE POLICY "Enable insert/update for community_pulse" ON public.community_pulse USING (true) WITH CHECK (true);
+-- bookings: visible/editable only to the customer or assigned worker
+CREATE POLICY "bookings_select_party" ON public.bookings FOR SELECT USING (customer_id = (SELECT auth.jwt()->>'sub') OR worker_id = (SELECT auth.jwt()->>'sub'));
+CREATE POLICY "bookings_insert_party" ON public.bookings FOR INSERT WITH CHECK (customer_id = (SELECT auth.jwt()->>'sub') OR worker_id = (SELECT auth.jwt()->>'sub'));
+CREATE POLICY "bookings_update_party" ON public.bookings FOR UPDATE USING (customer_id = (SELECT auth.jwt()->>'sub') OR worker_id = (SELECT auth.jwt()->>'sub')) WITH CHECK (customer_id = (SELECT auth.jwt()->>'sub') OR worker_id = (SELECT auth.jwt()->>'sub'));
+
+-- items (marketplace): any signed-in user can browse; only the seller can write
+CREATE POLICY "items_select_signed_in" ON public.items FOR SELECT USING ((SELECT auth.jwt()->>'sub') IS NOT NULL);
+CREATE POLICY "items_insert_seller" ON public.items FOR INSERT WITH CHECK (seller_id = (SELECT auth.jwt()->>'sub'));
+CREATE POLICY "items_update_seller" ON public.items FOR UPDATE USING (seller_id = (SELECT auth.jwt()->>'sub')) WITH CHECK (seller_id = (SELECT auth.jwt()->>'sub'));
+
+-- discussions: signed-in users can read; only the author can write
+CREATE POLICY "discussions_select_signed_in" ON public.discussions FOR SELECT USING ((SELECT auth.jwt()->>'sub') IS NOT NULL);
+CREATE POLICY "discussions_insert_author" ON public.discussions FOR INSERT WITH CHECK (author_id = (SELECT auth.jwt()->>'sub'));
+CREATE POLICY "discussions_update_author" ON public.discussions FOR UPDATE USING (author_id = (SELECT auth.jwt()->>'sub')) WITH CHECK (author_id = (SELECT auth.jwt()->>'sub'));
+
+-- community_pulse: shared content, read-only for clients (write with the service role from a server)
+CREATE POLICY "pulse_select_signed_in" ON public.community_pulse FOR SELECT USING ((SELECT auth.jwt()->>'sub') IS NOT NULL);
 `;
 
-// Global cache of tables that failed database operations (e.g. missing tables/RLS policies in backup Supabase)
+// Tables that recently failed a Supabase write. They are retried after a cool-down instead of being
+// disabled for the rest of the session, so one transient network error cannot silently stop syncing.
 export const unreadyTables = new Set<string>();
+const TABLE_RETRY_COOLDOWN_MS = 60_000;
 
-// CORE BACKGROUND ENGINE: Setup Real-time Listeners on Firestore collections and automatically pipe updates to Supabase
-export function startRealtimeDbSync() {
-  console.log('[SyncEngine] Initializing real-time dual-database bridge listener...');
+function markTableFailed(table: string) {
+  unreadyTables.add(table);
+  if (typeof setTimeout !== 'undefined') {
+    setTimeout(() => unreadyTables.delete(table), TABLE_RETRY_COOLDOWN_MS);
+  }
+}
 
-  const activeSyncUnsubscribers: (() => void)[] = [];
+// Fields that are sensitive and are never mirrored to the secondary database.
+const MIRROR_STRIP_KEYS = ['documents', 'verificationPhoto', 'dateOfBirth', 'mobileNumber'];
 
-  const syncConfig = [
-    {
-      collection: 'users',
-      table: 'users',
-      summaryField: 'username',
-      mapper: (id: string, docData: any) => ({
-        uid: id,
-        email: docData.email || '',
-        username: docData.username || 'User',
-        rewards_points: Number(docData.rewardsPoints || 0),
-        carbon_savings_kg: Number(docData.carbonSavingsKg || 0),
-        is_worker: Boolean(docData.isWorker),
-        created_at: getISOValue(docData.createdAt),
-        raw_data: docData
-      })
-    },
-    {
-      collection: 'bookings',
-      table: 'bookings',
-      summaryField: 'serviceType',
-      mapper: (id: string, docData: any) => ({
-        id,
-        customer_id: docData.customerId || '',
-        worker_id: docData.workerId || null,
-        service_type: docData.serviceType || 'Not Specified',
-        status: docData.status || 'pending',
-        price: Number(docData.price || 0),
-        created_at: getISOValue(docData.createdAt),
-        raw_data: docData
-      })
-    },
-    {
-      collection: 'discussions',
-      table: 'discussions',
-      summaryField: 'title',
-      mapper: (id: string, docData: any) => ({
-        id,
-        title: docData.title || '',
-        author_id: docData.authorId || '',
-        category: docData.category || 'general',
-        reactions: Number(docData.reactions || 0),
-        created_at: getISOValue(docData.createdAt),
-        raw_data: docData
-      })
-    },
-    {
-      collection: 'items',
-      table: 'items',
-      summaryField: 'title',
-      mapper: (id: string, docData: any) => ({
-        id,
-        title: docData.title || '',
-        seller_id: docData.sellerId || '',
-        price: Number(docData.price || 0),
-        status: docData.status || 'available',
-        created_at: getISOValue(docData.createdAt),
-        raw_data: docData
-      })
-    },
-    {
-      collection: 'community_pulse',
-      table: 'community_pulse',
-      summaryField: 'title',
-      mapper: (id: string, docData: any) => ({
-        id,
-        title: docData.title || '',
-        category: docData.category || 'info',
-        supporters_count: Number(docData.supportersCount || 0),
-        created_at: getISOValue(docData.createdAt),
-        raw_data: docData
-      })
-    }
+function sanitizeForMirror(data: any) {
+  const copy = { ...(data || {}) };
+  for (const key of MIRROR_STRIP_KEYS) delete copy[key];
+  return copy;
+}
+
+interface SyncTarget {
+  collection: 'users' | 'bookings' | 'discussions' | 'items';
+  table: string;
+  keyColumn: 'uid' | 'id';
+  summaryField: string;
+  mapper: (id: string, docData: any) => Record<string, any>;
+}
+
+// One definition shared by the live listener and the batch migration.
+const SYNC_TARGETS: SyncTarget[] = [
+  {
+    collection: 'users',
+    table: 'users',
+    keyColumn: 'uid',
+    summaryField: 'username',
+    mapper: (id, docData) => ({
+      uid: id,
+      email: docData.email || '',
+      username: docData.username || 'User',
+      rewards_points: Number(docData.rewardsPoints || 0),
+      carbon_savings_kg: Number(docData.carbonSavingsKg || 0),
+      is_worker: Boolean(docData.isWorker),
+      created_at: getISOValue(docData.createdAt),
+      raw_data: sanitizeForMirror(docData)
+    })
+  },
+  {
+    collection: 'bookings',
+    table: 'bookings',
+    keyColumn: 'id',
+    summaryField: 'serviceType',
+    mapper: (id, docData) => ({
+      id,
+      customer_id: docData.customerId || '',
+      worker_id: docData.workerId || null,
+      service_type: docData.serviceType || 'Not Specified',
+      status: docData.status || 'pending',
+      price: Number(docData.price || 0),
+      created_at: getISOValue(docData.createdAt),
+      raw_data: docData
+    })
+  },
+  {
+    collection: 'discussions',
+    table: 'discussions',
+    keyColumn: 'id',
+    summaryField: 'title',
+    mapper: (id, docData) => ({
+      id,
+      title: docData.title || '',
+      author_id: docData.authorId || '',
+      category: docData.category || 'general',
+      reactions: Number(docData.reactions || 0),
+      created_at: getISOValue(docData.createdAt),
+      raw_data: docData
+    })
+  },
+  {
+    collection: 'items',
+    table: 'items',
+    keyColumn: 'id',
+    summaryField: 'title',
+    mapper: (id, docData) => ({
+      id,
+      title: docData.title || '',
+      seller_id: docData.sellerId || '',
+      price: Number(docData.price || 0),
+      status: docData.status || 'available',
+      created_at: getISOValue(docData.createdAt),
+      raw_data: docData
+    })
+  }
+];
+
+// Only the signed-in user's OWN documents are mirrored. (Previously every browser listened to the
+// whole collections and re-uploaded everyone's data, which was costly and a privacy/security risk.)
+function getOwnedSources(uid: string): { target: SyncTarget; kind: 'doc' | 'query'; ref: any }[] {
+  const byName = (name: SyncTarget['collection']) => SYNC_TARGETS.find(t => t.collection === name)!;
+  return [
+    { target: byName('users'), kind: 'doc', ref: doc(db, 'users', uid) },
+    { target: byName('bookings'), kind: 'query', ref: query(collection(db, 'bookings'), where('customerId', '==', uid)) },
+    { target: byName('bookings'), kind: 'query', ref: query(collection(db, 'bookings'), where('workerId', '==', uid)) },
+    { target: byName('items'), kind: 'query', ref: query(collection(db, 'items'), where('sellerId', '==', uid)) },
+    { target: byName('discussions'), kind: 'query', ref: query(collection(db, 'discussions'), where('authorId', '==', uid)) }
   ];
+}
 
-  syncConfig.forEach(({ collection: colName, table: tableName, summaryField, mapper }) => {
+async function pushDocToSupabase(
+  target: SyncTarget,
+  docId: string,
+  docData: any,
+  actionType: 'ADDED' | 'MODIFIED'
+) {
+  const pSummary = String(docData?.[target.summaryField] ?? 'N/A');
+
+  // Local offline cache of the user's own critical docs
+  saveCriticalData(target.collection, docId, target.collection === 'users' ? sanitizeForMirror(docData) : docData);
+
+  if (!isSupabaseConfigured() || !supabase) {
+    logSyncEvent(target.collection, docId, actionType, `${pSummary} [Simulation/Pushed Mode]`, 'success', 'simulated');
+    return;
+  }
+  if (unreadyTables.has(target.table)) {
+    logSyncEvent(target.collection, docId, actionType, `${pSummary} (paused, retrying shortly)`, 'success', 'failed', 'Recent Supabase error; will retry after cool-down');
+    return;
+  }
+
+  try {
+    const { error } = await supabase.from(target.table).upsert(target.mapper(docId, docData) as any);
+    if (error) {
+      markTableFailed(target.table);
+      console.warn(`[SyncEngine] Supabase table '${target.table}' rejected a write; pausing it for ${TABLE_RETRY_COOLDOWN_MS / 1000}s:`, error.message);
+      logSyncEvent(target.collection, docId, actionType, pSummary, 'success', 'failed', error.message);
+    } else {
+      logSyncEvent(target.collection, docId, actionType, pSummary, 'success', 'success');
+    }
+  } catch (e: any) {
+    markTableFailed(target.table);
+    logSyncEvent(target.collection, docId, actionType, pSummary, 'success', 'failed', e?.message || 'Network error');
+  }
+}
+
+// CORE BACKGROUND ENGINE: mirror the signed-in user's own Firestore documents to Supabase in real time
+export function startRealtimeDbSync(uid?: string) {
+  if (!uid) {
+    console.warn('[SyncEngine] No signed-in user; real-time sync not started.');
+    return () => {};
+  }
+  console.log('[SyncEngine] Initializing real-time dual-database bridge listener (own data only)...');
+
+  const unsubscribers: (() => void)[] = [];
+
+  getOwnedSources(uid).forEach(({ target, kind, ref }) => {
     try {
-      const unsub = onSnapshot(collection(db, colName), (snapshot) => {
-        snapshot.docChanges().forEach(async (change) => {
-          const docId = change.doc.id;
-          const docData = change.doc.data();
-          const pSummary = docData[summaryField] || 'N/A';
-
-          if (change.type === 'removed') {
-            // Delete locally from IndexedDB cache
-            removeCriticalData(colName, docId);
-
-            // Document deleted in Firestore - delete in Supabase
-            if (isSupabaseConfigured() && supabase && !unreadyTables.has(tableName)) {
-              try {
-                const { error } = await supabase
-                  .from(tableName)
-                  .delete()
-                  .eq(colName === 'users' ? 'uid' : 'id', docId);
-
-                if (error) {
-                  unreadyTables.add(tableName);
-                  console.warn(`[SyncEngine] Supabase table '${tableName}' has schema/permission exceptions. Bypassing further real-time updates:`, error.message);
-                  logSyncEvent(colName, docId, 'DELETED', pSummary, 'success', 'simulated', error.message);
-                } else {
-                  logSyncEvent(colName, docId, 'DELETED', pSummary, 'success', 'success');
-                }
-              } catch (e: any) {
-                unreadyTables.add(tableName);
-                logSyncEvent(colName, docId, 'DELETED', pSummary, 'success', 'simulated', e?.message || 'Network error');
-              }
-            } else {
-              logSyncEvent(colName, docId, 'DELETED', pSummary, 'success', 'simulated');
-            }
-          } else {
-            // Save locally to IndexedDB cache
-            saveCriticalData(colName, docId, docData);
-
-            // Document added/modified
-            const actionType = change.type === 'added' ? 'ADDED' : 'MODIFIED';
-            const mappedPayload = mapper(docId, docData);
-
-            if (isSupabaseConfigured() && supabase && !unreadyTables.has(tableName)) {
-              try {
-                const { error } = await supabase
-                  .from(tableName)
-                  .upsert(mappedPayload as any);
-
-                if (error) {
-                  unreadyTables.add(tableName);
-                  console.warn(`[SyncEngine] Supabase table '${tableName}' has schema/permission exceptions. Bypassing further real-time updates:`, error.message);
-                  logSyncEvent(
-                    colName,
-                    docId,
-                    actionType,
-                    `${pSummary} (Bypassed)`,
-                    'success',
-                    'simulated',
-                    error.message
-                  );
-                } else {
-                  logSyncEvent(
-                    colName,
-                    docId,
-                    actionType,
-                    `${pSummary}`,
-                    'success',
-                    'success'
-                  );
-                }
-              } catch (catchErr: any) {
-                unreadyTables.add(tableName);
-                console.warn(`[SyncEngine] Supabase connection error on table '${tableName}':`, catchErr?.message || catchErr);
-                logSyncEvent(
-                  colName,
-                  docId,
-                  actionType,
-                  `${pSummary}`,
-                  'success',
-                  'simulated'
-                );
-              }
-            } else {
-              // Simulated sync for smooth local testing
-              logSyncEvent(
-                colName,
-                docId,
-                actionType,
-                `${pSummary} [Simulation/Pushed Mode]`,
-                'success',
-                'simulated'
-              );
-            }
-          }
+      if (kind === 'doc') {
+        let seen = false;
+        const unsub = onSnapshot(ref, (snap: any) => {
+          if (!snap.exists()) return;
+          const action = seen ? 'MODIFIED' : 'ADDED';
+          seen = true;
+          pushDocToSupabase(target, snap.id, snap.data(), action);
+        }, (error: any) => {
+          console.warn(`[SyncEngine] Listening on '${target.collection}' failed:`, error);
         });
-      }, (error) => {
-        console.warn(`[SyncEngine] Listening on snapshot for '${colName}' failed:`, error);
-      });
-
-      activeSyncUnsubscribers.push(unsub);
+        unsubscribers.push(unsub);
+      } else {
+        const unsub = onSnapshot(ref, (snapshot: any) => {
+          snapshot.docChanges().forEach((change: any) => {
+            const docId = change.doc.id;
+            if (change.type === 'removed') {
+              // A scoped listener cannot tell "deleted" from "no longer matches", so remote deletes
+              // are not propagated from here. Only the local cache entry is dropped.
+              removeCriticalData(target.collection, docId);
+              logSyncEvent(target.collection, docId, 'DELETED', String(change.doc.data()?.[target.summaryField] ?? 'N/A'), 'success', 'simulated', 'Remote delete skipped (scoped listener)');
+              return;
+            }
+            pushDocToSupabase(target, docId, change.doc.data(), change.type === 'added' ? 'ADDED' : 'MODIFIED');
+          });
+        }, (error: any) => {
+          console.warn(`[SyncEngine] Listening on '${target.collection}' failed:`, error);
+        });
+        unsubscribers.push(unsub);
+      }
     } catch (e) {
-      console.warn(`[SyncEngine] Failed listening setup on '${colName}':`, e);
+      console.warn(`[SyncEngine] Failed listening setup on '${target.collection}':`, e);
     }
   });
 
   return () => {
-    activeSyncUnsubscribers.forEach(unsub => unsub());
+    unsubscribers.forEach(unsub => unsub());
   };
 }
 
-// BATCH MIGRATION: Trigger a complete push of all current docs in Firestore into Supabase
+// BATCH MIGRATION: push all of the signed-in user's own documents from Firestore into Supabase
 export async function runFullBatchMigration() {
   if (!isSupabaseConfigured() || !supabase) {
     throw new Error('Supabase Client is not yet configured. Please supply VITE_SUPABASE_ANON_KEY in settings first.');
+  }
+  const uid = auth.currentUser?.uid;
+  if (!uid) {
+    throw new Error('Please sign in before running a migration.');
   }
 
   const resultStats = {
@@ -379,110 +390,41 @@ export async function runFullBatchMigration() {
     community_pulse: { success: 0, failed: 0 }
   };
 
-  const syncConfig = [
-    {
-      collection: 'users',
-      table: 'users',
-      mapper: (id: string, docData: any) => ({
-        uid: id,
-        email: docData.email || '',
-        username: docData.username || 'User',
-        rewards_points: Number(docData.rewardsPoints || 0),
-        carbon_savings_kg: Number(docData.carbonSavingsKg || 0),
-        is_worker: Boolean(docData.isWorker),
-        created_at: getISOValue(docData.createdAt),
-        raw_data: docData
-      })
-    },
-    {
-      collection: 'bookings',
-      table: 'bookings',
-      mapper: (id: string, docData: any) => ({
-        id,
-        customer_id: docData.customerId || '',
-        worker_id: docData.workerId || null,
-        service_type: docData.serviceType || 'Not Specified',
-        status: docData.status || 'pending',
-        price: Number(docData.price || 0),
-        created_at: getISOValue(docData.createdAt),
- Raw_data: docData
-      })
-    },
-    {
-      collection: 'discussions',
-      table: 'discussions',
-      mapper: (id: string, docData: any) => ({
-        id,
-        title: docData.title || '',
-        author_id: docData.authorId || '',
-        category: docData.category || 'general',
-        reactions: Number(docData.reactions || 0),
-        created_at: getISOValue(docData.createdAt),
-        raw_data: docData
-      })
-    },
-    {
-      collection: 'items',
-      table: 'items',
-      mapper: (id: string, docData: any) => ({
-        id,
-        title: docData.title || '',
-        seller_id: docData.sellerId || '',
-        price: Number(docData.price || 0),
-        status: docData.status || 'available',
-        created_at: getISOValue(docData.createdAt),
-        raw_data: docData
-      })
-    },
-    {
-      collection: 'community_pulse',
-      table: 'community_pulse',
-      mapper: (id: string, docData: any) => ({
-        id,
-        title: docData.title || '',
-        category: docData.category || 'info',
-        supporters_count: Number(docData.supportersCount || 0),
-        created_at: getISOValue(docData.createdAt),
-        raw_data: docData
-      })
-    }
-  ];
+  const seen = new Set<string>();
 
-  for (const config of syncConfig) {
+  for (const { target, kind, ref } of getOwnedSources(uid)) {
+    const keyName = target.collection as keyof typeof resultStats;
     try {
-      const snap = await getDocs(collection(db, config.collection));
-      const keyName = config.collection as keyof typeof resultStats;
+      const docs: { id: string; data: any }[] = [];
+      if (kind === 'doc') {
+        const snap = await getDoc(ref);
+        if (snap.exists()) docs.push({ id: snap.id, data: snap.data() });
+      } else {
+        const snap = await getDocs(ref);
+        snap.docs.forEach((d: any) => docs.push({ id: d.id, data: d.data() }));
+      }
 
-      for (const d of snap.docs) {
-        const id = d.id;
-        const mapped = config.mapper(id, d.data());
+      for (const { id, data } of docs) {
+        const dedupeKey = `${target.collection}/${id}`;
+        if (seen.has(dedupeKey)) continue; // a booking can match both the customer and worker query
+        seen.add(dedupeKey);
 
-        if (!unreadyTables.has(config.table)) {
-          try {
-            const { error } = await supabase
-              .from(config.table)
-              .upsert(mapped as any);
-
-            if (error) {
-              unreadyTables.add(config.table);
-              resultStats[keyName].failed++;
-              logSyncEvent(config.collection, id, 'MIGRATED', `Batch: ${id}`, 'success', 'simulated', error.message);
-            } else {
-              resultStats[keyName].success++;
-              logSyncEvent(config.collection, id, 'MIGRATED', `Batch: ${id}`, 'success', 'success');
-            }
-          } catch (e: any) {
-            unreadyTables.add(config.table);
+        try {
+          const { error } = await supabase.from(target.table).upsert(target.mapper(id, data) as any);
+          if (error) {
             resultStats[keyName].failed++;
-            logSyncEvent(config.collection, id, 'MIGRATED', `Batch: ${id}`, 'success', 'simulated', e?.message || 'Network error');
+            logSyncEvent(target.collection, id, 'MIGRATED', `Batch: ${id}`, 'success', 'failed', error.message);
+          } else {
+            resultStats[keyName].success++;
+            logSyncEvent(target.collection, id, 'MIGRATED', `Batch: ${id}`, 'success', 'success');
           }
-        } else {
-          resultStats[keyName].success++;
-          logSyncEvent(config.collection, id, 'MIGRATED', `Batch: ${id} (Simulated)`, 'success', 'simulated');
+        } catch (e: any) {
+          resultStats[keyName].failed++;
+          logSyncEvent(target.collection, id, 'MIGRATED', `Batch: ${id}`, 'success', 'failed', e?.message || 'Network error');
         }
       }
     } catch (e: any) {
-      console.warn(`Migration notice on ${config.collection}:`, e?.message || e);
+      console.warn(`Migration notice on ${target.collection}:`, e?.message || e);
     }
   }
 

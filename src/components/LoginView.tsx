@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
 import { LogIn, UserPlus, HelpCircle, ArrowLeft, Eye, EyeOff, Mail, Lock, User, Phone, Calendar, Heart, ShieldCheck, Apple, CheckCircle2, Fingerprint, ScanFace, FileText, Info, Compass } from 'lucide-react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
+import { resolveLoginIdentifier, lookupLoginIndex, mobileKey } from '../lib/loginIndex';
 import { db, firebaseConfig } from '../lib/firebase';
 import { haptics } from '../utils/haptics';
 
@@ -85,24 +86,13 @@ export function LoginView() {
       console.warn("WebAuthn assertion blocked or failed. Activating secure sandbox-safe biometric fallback:", err);
     }
 
-    // Complete scan successfully
+    // Security: we never keep a password on the device and never sign in on a fake biometric
+    // success. Until passkey-backed sign-in is wired to the server, direct the user to log in.
     setTimeout(() => {
-      setBiometricStatus('success');
-      setTimeout(async () => {
-        try {
-          const savedEmail = localStorage.getItem('lastUserEmail') || 'customer@konnects.co.uk';
-          const savedPass = localStorage.getItem('lastUserPass') || 'password123';
-          
-          await emailSignIn(savedEmail, savedPass);
-          setShowBiometricModal(false);
-          setBiometricStatus('idle');
-          haptics.success();
-        } catch (err) {
-          setShowBiometricModal(false);
-          setBiometricStatus('idle');
-          setError("Biometric keys authenticated! Since your session has expired, please log in once with your password to re-bind credentials.");
-        }
-      }, 1000);
+      setShowBiometricModal(false);
+      setBiometricStatus('idle');
+      setError("This device has no registered passkey yet, so biometric sign-in is unavailable. Please sign in with your password.");
+      haptics.heavy();
     }, 1200);
   };
 
@@ -119,30 +109,18 @@ export function LoginView() {
         localStorage.setItem('emailContactConsent', agreeEmailContact ? 'true' : 'false');
         let finalEmail = formData.email;
 
-        // Support User ID, username, or mobile number lookup in Firestore if not standard email
+        // Support User ID (username) or mobile number if not a standard email.
+        // Uses the single-document login index instead of scanning the users collection.
         if (formData.email && !formData.email.includes('@')) {
-          const uQuery = query(collection(db, 'users'), where('username', '==', formData.email));
-          const mQuery = query(collection(db, 'users'), where('mobileNumber', '==', formData.email));
-          
-          const [uSnap, mSnap] = await Promise.all([getDocs(uQuery), getDocs(mQuery)]);
-          let candidateDoc = null;
-
-          if (!uSnap.empty) {
-            candidateDoc = uSnap.docs[0];
-          } else if (!mSnap.empty) {
-            candidateDoc = mSnap.docs[0];
-          }
-
-          if (candidateDoc) {
-            finalEmail = candidateDoc.data().email;
-          } else {
+          const resolved = await resolveLoginIdentifier(formData.email);
+          if (!resolved) {
             throw new Error("No registered account matches this User ID (username) or Mobile Number.");
           }
+          finalEmail = resolved;
         }
 
         await emailSignIn(finalEmail, formData.password);
         localStorage.setItem('lastUserEmail', finalEmail);
-        localStorage.setItem('lastUserPass', formData.password);
       } else if (mode === 'signup') {
         if (!agreeTerms) {
           throw new Error("You must agree to the Terms and Conditions of service.");
@@ -184,13 +162,9 @@ export function LoginView() {
     setLoading(true);
     setFoundAccounts([]);
     try {
-      const q = query(
-        collection(db, 'users'),
-        where('mobileNumber', '==', formData.mobileNumber),
-        where('dateOfBirth', '==', formData.dob)
-      );
-      const snap = await getDocs(q);
-      const accounts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Lookup by mobile number through the single-document login index (users can no longer be listed).
+      const entry = formData.mobileNumber ? await lookupLoginIndex(mobileKey(formData.mobileNumber)) : null;
+      const accounts = entry ? [{ id: entry.uid || 'match', username: entry.username || 'Account', email: entry.email }] : [];
       setFoundAccounts(accounts);
       setMode('results');
     } catch (err) {
