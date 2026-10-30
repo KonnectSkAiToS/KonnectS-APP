@@ -11,6 +11,7 @@ import { UserProfile } from '../types';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { appendUserToGoogleSheets } from '../lib/sheetsService';
 import { resolveLoginIdentifier, ensureLoginIndex } from '../lib/loginIndex';
+import { ensurePublicProfile } from '../lib/publicProfile';
 import { clearUserLocalData } from '../utils/indexedDB';
 
 // Demo accounts / simulated logins are for development only. Enable explicitly in other builds.
@@ -340,6 +341,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               loginIndexed = true;
               ensureLoginIndex(profileData as any);
             }
+            ensurePublicProfile(profileData as any);
             localStorage.setItem(`konnects_profile_cache_${user.uid}`, JSON.stringify(profileData));
             
             // Sync user profile data to Service Worker cache via API endpoint

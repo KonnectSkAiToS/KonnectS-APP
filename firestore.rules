@@ -166,6 +166,37 @@ service cloud.firestore {
       allow delete: if isOwner(existing().uid);
     }
 
+    // ---------- 1.2 Public worker directory ----------
+    // Safe, shareable subset of a worker's profile (no email, phone, DOB or documents), so the directory
+    // never needs to list /users. Trust fields must equal the real values on the owner's own /users doc,
+    // so a worker can mirror them but never forge a rating or "verified" badge.
+    match /public_profiles/{userId} {
+      function ownDoc() {
+        return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      }
+      function isValidPublicProfile(data) {
+        return data.keys().hasOnly([
+                 'uid', 'username', 'fullName', 'avatarUrl', 'workerType', 'skills', 'hourlyRate',
+                 'availabilityStatus', 'bio', 'location', 'isWorker', 'rating', 'reviewCount',
+                 'verificationStatus', 'isPremiumWorker', 'featured', 'updatedAt'
+               ]) &&
+               data.uid == request.auth.uid &&
+               data.username is string && data.username.size() <= 64 &&
+               data.get('isWorker', false) == true &&
+               data.get('rating', 0) == ownDoc().get('rating', 0) &&
+               data.get('reviewCount', 0) == ownDoc().get('reviewCount', 0) &&
+               data.get('verificationStatus', '') == ownDoc().get('verificationStatus', '') &&
+               data.get('isPremiumWorker', false) == ownDoc().get('isPremiumWorker', false) &&
+               data.get('featured', false) == ownDoc().get('featured', false) &&
+               (!('updatedAt' in data) || data.updatedAt == request.time);
+      }
+
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && request.query.limit <= 100;
+      allow create, update: if isOwner(userId) && isValidPublicProfile(incoming());
+      allow delete: if isOwner(userId);
+    }
+
     // ---------- 2. Marketplace items ----------
     match /items/{itemId} {
       function isValidItem(data) {
@@ -428,6 +459,26 @@ service cloud.firestore {
       allow create: if isSignedIn();
       allow read: if isAdmin();
       allow update, delete: if false;
+    }
+
+    // ---------- 21. Map hubs (read-only reference data) ----------
+    match /hubs/{hubId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ---------- 22. Volunteer hours (owner logs, admin approves) ----------
+    match /volunteer_hours/{entryId} {
+      allow read: if isOwner(resource.data.userId) || isAdmin();
+      allow create: if isSignedIn() &&
+                    incoming().keys().hasOnly(['userId', 'charityName', 'hours', 'note', 'status', 'createdAt']) &&
+                    incoming().userId == request.auth.uid &&
+                    incoming().charityName is string && incoming().charityName.size() <= 200 &&
+                    incoming().hours is number && incoming().hours > 0 && incoming().hours <= 24 &&
+                    incoming().get('note', '') is string && incoming().get('note', '').size() <= 1000 &&
+                    incoming().status == 'pending' &&
+                    incoming().createdAt == request.time;
+      allow update, delete: if isAdmin();
     }
 
     // ---------- 20. Admin-only data ----------

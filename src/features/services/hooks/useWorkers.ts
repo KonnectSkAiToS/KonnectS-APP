@@ -21,12 +21,12 @@ const toWorker = (u: UserProfile): Worker => ({
   bio: u.bio,
 });
 
-/** Live worker profiles from `users`. `category` is left empty for the caller to fill. */
+/** Live worker profiles from the `public_profiles` directory (safe fields only). `category` is left empty for the caller to fill. */
 export function useWorkers(max = 100) {
   const { data, ...rest } = useFirestoreQuery<UserProfile & { id: string }>(
-    () => query(collection(db, 'users'), where('isWorker', '==', true), limit(max)),
+    () => query(collection(db, 'public_profiles'), where('isWorker', '==', true), limit(max)),
     [max],
-    'users',
+    'public_profiles',
   );
   const workers = useMemo(() => data.map(toWorker), [data]);
   return { workers, ...rest };
