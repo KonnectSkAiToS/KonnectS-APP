@@ -15,7 +15,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 export function CommunityBoard() {
   const { user, profile } = useAuth();
   const { data: threads } = useDiscussions();
-  const [selectedThread, setSelectedThread] = useState<ThreadItem | null>(null);
+  const [openThread, setSelectedThread] = useState<ThreadItem | null>(null);
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -29,10 +29,8 @@ export function CommunityBoard() {
   const [replyText, setReplyText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Keep the open thread in sync with live updates
-  useEffect(() => {
-    setSelectedThread(cur => (cur ? threads.find(t => t.id === cur.id) ?? cur : cur));
-  }, [threads]);
+  // Always show the live version of the open thread (derived, so no effect or extra render is needed)
+  const selectedThread = openThread ? threads.find(t => t.id === openThread.id) ?? openThread : null;
 
   const handlePostThread = async (e: React.FormEvent) => {
     e.preventDefault();
