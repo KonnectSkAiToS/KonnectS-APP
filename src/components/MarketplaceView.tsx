@@ -1627,9 +1627,10 @@ function CreateListingModal({
   category, setCategory, condition, setCondition, images, onGenerateImage, isGenerating, onSubmit, isSubmitting, setImages,
   tags, setTags, summary, setSummary, onGenerateTagsSummary, isGeneratingTagsSummary
 }: any) {
-  if (!show) return null;
-
+  // Hooks must run on every render, so this goes before the early return below.
   const [uploading, setUploading] = useState(false);
+
+  if (!show) return null;
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

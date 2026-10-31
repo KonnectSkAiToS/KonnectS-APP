@@ -16,10 +16,14 @@ export function useFirestoreQuery<T>(build: () => Query | null, deps: unknown[],
 
   useEffect(() => {
     const q = build();
+    // Intentional synchronous resets: when the query changes (or goes idle) the previous results must be
+    // replaced immediately so stale rows never show against a new query.
     if (!q) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setState({ data: [], loading: false, error: null, source: 'cache' });
       return;
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setState(s => ({ ...s, loading: true }));
     return onSnapshot(
       q,
