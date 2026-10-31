@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
 import { type LucideIcon, LogIn, UserPlus, HelpCircle, ArrowLeft, Eye, EyeOff, Mail, Lock, User, Phone, Calendar, Heart, ShieldCheck, Apple, CheckCircle2, Fingerprint, ScanFace, FileText, Info, Compass } from 'lucide-react';
@@ -16,6 +16,9 @@ import { haptics } from '../utils/haptics';
 // (for testers). Production never displays the code or accepts the built-in test codes.
 const SHOW_DEMO_OTP =
   Boolean((import.meta as any).env?.DEV) || (import.meta as any).env?.VITE_SHOW_DEMO_OTP === 'true';
+
+// Demo code generator (the OTP step is a simulation; see SHOW_DEMO_OTP above)
+const generateOtpCode = () => Math.floor(100000 + Math.random() * 900000).toString();
 
 const isValidEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim());
 const isValidMobile = (v: string) => {
@@ -73,6 +76,13 @@ export function LoginView() {
   // OTP Verification preference & input states
   const [otpChannel, setOtpChannel] = useState<'mobile' | 'email'>('mobile');
   const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
+  // Mirror of otpDigits that is updated synchronously, so keystrokes that arrive faster than React re-renders
+  // (fast typing, SMS autofill, paste) never overwrite each other.
+  const otpRef = useRef<string[]>(['', '', '', '', '', '']);
+  const updateOtp = (next: string[]) => {
+    otpRef.current = next;
+    setOtpDigits(next);
+  };
   const [generatedOtp, setGeneratedOtp] = useState<string>('849201');
   const [resendCountdown, setResendCountdown] = useState<number>(30);
 
@@ -250,9 +260,9 @@ export function LoginView() {
         }
 
         // Generate 6-digit OTP for user verification
-        const newCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const newCode = generateOtpCode();
         setGeneratedOtp(newCode);
-        setOtpDigits(['', '', '', '', '', '']);
+        updateOtp(['', '', '', '', '', '']);
         setResendCountdown(30);
         setMode('otp-verification');
         haptics.success();
@@ -285,15 +295,26 @@ export function LoginView() {
     }
   };
 
-  const handleVerifyOtpAndCreateAccount = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const focusOtpBox = (index: number) => {
+    // Immediately, so the very next keystroke already lands in the right box...
+    document.getElementById(`otp-input-${index}`)?.focus();
+    // ...and again after React re-renders, in case the render moved focus.
+    setTimeout(() => document.getElementById(`otp-input-${index}`)?.focus(), 0);
+  };
+
+  // Guards against a double submit (auto-submit on the 6th digit + a tap on the button)
+  const verifyingRef = useRef(false);
+
+  const verifyOtpCode = async (enteredCode: string) => {
+    if (verifyingRef.current) return;
+    if (enteredCode.length < 6) {
+      setError("Please enter the complete 6-digit verification code.");
+      return;
+    }
+    verifyingRef.current = true;
     setLoading(true);
     setError(null);
     try {
-      const enteredCode = otpDigits.join('');
-      if (enteredCode.length < 6) {
-        throw new Error("Please enter the complete 6-digit verification code.");
-      }
       if (!SHOW_DEMO_OTP) {
         throw new Error("Verification codes can't be delivered on this site yet, so the account can't be created.");
       }
@@ -311,17 +332,46 @@ export function LoginView() {
         msg = "This email address is already registered. Please log in to your existing account.";
       }
       setError(msg);
+      // Start over from the first box so a retry is quick
+      updateOtp(['', '', '', '', '', '']);
+      focusOtpBox(0);
     } finally {
+      verifyingRef.current = false;
       setLoading(false);
     }
   };
 
+  const handleVerifyOtpAndCreateAccount = (e: React.FormEvent) => {
+    e.preventDefault();
+    verifyOtpCode(otpDigits.join(''));
+  };
+
+  // Put digits into the boxes starting at `startIdx` (typing, paste and SMS autofill all end up here)
+  const fillOtpFrom = (startIdx: number, raw: string) => {
+    const digits = raw.replace(/\D/g, '');
+    if (!digits) return;
+    const next = [...otpRef.current];
+    let i = startIdx;
+    for (const ch of digits) {
+      if (i > 5) break;
+      next[i++] = ch;
+    }
+    updateOtp(next);
+    if (next.every(Boolean)) {
+      // The 6th digit is in: verify straight away
+      verifyOtpCode(next.join(''));
+    } else {
+      focusOtpBox(Math.min(i, 5));
+    }
+  };
+
   const handleResendOtp = () => {
-    const newCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const newCode = generateOtpCode();
     setGeneratedOtp(newCode);
-    setOtpDigits(['', '', '', '', '', '']);
+    updateOtp(['', '', '', '', '', '']);
     setResendCountdown(30);
     setError(null);
+    focusOtpBox(0);
     haptics.success();
   };
 
@@ -392,7 +442,7 @@ export function LoginView() {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 pb-20">
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6">
       <motion.div
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -1054,10 +1104,11 @@ export function LoginView() {
                       const nextChannel = otpChannel === 'mobile' ? 'email' : 'mobile';
                       setOtpChannel(nextChannel);
                       // A new channel means a new code
-                      setGeneratedOtp(Math.floor(100000 + Math.random() * 900000).toString());
-                      setOtpDigits(['', '', '', '', '', '']);
+                      setGeneratedOtp(generateOtpCode());
+                      updateOtp(['', '', '', '', '', '']);
                       setResendCountdown(30);
                       setError(null);
+                      focusOtpBox(0);
                       haptics.light();
                     }}
                     className="text-indigo-600 font-extrabold hover:underline cursor-pointer text-right"
@@ -1081,22 +1132,41 @@ export function LoginView() {
                       id={`otp-input-${idx}`}
                       type="text"
                       inputMode="numeric"
-                      maxLength={1}
+                      pattern="[0-9]*"
+                      enterKeyHint="done"
+                      autoComplete={idx === 0 ? 'one-time-code' : 'off'}
+                      autoFocus={idx === 0}
+                      aria-label={`Digit ${idx + 1} of 6`}
                       value={digit}
+                      onFocus={(e) => e.target.select()}
                       onChange={(e) => {
-                        const val = e.target.value.replace(/[^0-9]/g, '');
-                        const newArr = [...otpDigits];
-                        newArr[idx] = val;
-                        setOtpDigits(newArr);
-                        if (val && idx < 5) {
-                          const nextEl = document.getElementById(`otp-input-${idx + 1}`);
-                          nextEl?.focus();
+                        const raw = e.target.value;
+                        if (raw === '') {
+                          const cleared = [...otpRef.current];
+                          cleared[idx] = '';
+                          updateOtp(cleared);
+                          return;
                         }
+                        fillOtpFrom(idx, raw);
+                      }}
+                      onPaste={(e) => {
+                        e.preventDefault();
+                        const pasted = e.clipboardData.getData('text').replace(/\D/g, '');
+                        // A full code always starts from the first box
+                        fillOtpFrom(pasted.length >= 6 ? 0 : idx, pasted);
                       }}
                       onKeyDown={(e) => {
-                        if (e.key === 'Backspace' && !otpDigits[idx] && idx > 0) {
-                          const prevEl = document.getElementById(`otp-input-${idx - 1}`);
-                          prevEl?.focus();
+                        if (e.key === 'Backspace' && !otpRef.current[idx] && idx > 0) {
+                          const cleared = [...otpRef.current];
+                          cleared[idx - 1] = '';
+                          updateOtp(cleared);
+                          focusOtpBox(idx - 1);
+                        } else if (e.key === 'ArrowLeft' && idx > 0) {
+                          e.preventDefault();
+                          focusOtpBox(idx - 1);
+                        } else if (e.key === 'ArrowRight' && idx < 5) {
+                          e.preventDefault();
+                          focusOtpBox(idx + 1);
                         }
                       }}
                       className="w-11 h-13 text-center text-lg font-black bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-brand outline-none transition-all"
@@ -1106,7 +1176,7 @@ export function LoginView() {
 
                 <div className="flex items-center justify-between text-[10px] pt-1 px-1">
                   {SHOW_DEMO_OTP ? (
-                    <span className="text-slate-400 font-bold">
+                    <span className="text-slate-500 font-bold">
                       Demo OTP: <span className="font-mono font-black text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">{generatedOtp}</span>
                     </span>
                   ) : <span />}
@@ -1114,7 +1184,7 @@ export function LoginView() {
                     type="button"
                     onClick={handleResendOtp}
                     disabled={resendCountdown > 0}
-                    className="text-brand font-extrabold hover:underline disabled:text-slate-300 cursor-pointer"
+                    className="text-brand font-extrabold hover:underline disabled:text-slate-500 disabled:no-underline disabled:cursor-default cursor-pointer"
                   >
                     {resendCountdown > 0 ? `Resend in ${resendCountdown}s` : 'Resend Code'}
                   </button>
@@ -1127,6 +1197,7 @@ export function LoginView() {
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0 }}
+                    role="alert"
                     className="bg-rose-50 border border-rose-100 p-3 rounded-2xl text-rose-600 text-xs font-bold"
                   >
                     {error}
@@ -1375,6 +1446,10 @@ export function LoginView() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        <p className="mt-6 border-t border-slate-100 pt-5 text-center text-[10px] font-black uppercase italic tracking-[0.2em] text-slate-500">
+          KonnectS • Encrypted & Secure
+        </p>
       </motion.div>
 
       {/* BIOMETRIC HANDSHAKE HUD */}
@@ -1512,9 +1587,6 @@ export function LoginView() {
         )}
       </AnimatePresence>
 
-      <p className="mt-8 text-center text-[10px] text-slate-300 font-black uppercase tracking-[0.2em] italic">
-        KonnectS • Encrypted & Secure
-      </p>
     </div>
   );
 }
