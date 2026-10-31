@@ -22,16 +22,6 @@ const isValidMobile = (v: string) => {
   const digits = v.replace(/\D/g, '');
   return /^\+?[0-9\s().-]+$/.test(v.trim()) && digits.length >= 7 && digits.length <= 15;
 };
-const maskEmail = (v: string) => {
-  const [user = '', domain = ''] = v.trim().split('@');
-  return `${user.slice(0, 2)}${'\u2022'.repeat(Math.max(user.length - 2, 2))}@${domain}`;
-};
-const maskMobile = (v: string) => {
-  const t = v.trim();
-  const digits = t.replace(/\D/g, '');
-  const prefix = t.startsWith('+') ? t.slice(0, 3) : '';
-  return `${prefix} ${'\u2022'.repeat(Math.max(digits.length - 3 - (prefix ? 2 : 0), 3))}${digits.slice(-3)}`.trim();
-};
 
 /** Password input with its own show/hide toggle (used for both password fields on sign-up). */
 function PasswordField({ name, placeholder, value, onChange, icon: Icon, autoComplete }: {
@@ -1051,7 +1041,7 @@ export function LoginView() {
                     : 'We sent a 6-digit security code by email to'}
                   <br />
                   <span className="font-black text-indigo-700 text-sm break-all">
-                    {otpChannel === 'mobile' ? maskMobile(formData.mobileNumber) : maskEmail(formData.email)}
+                    {otpChannel === 'mobile' ? formData.mobileNumber.trim() : formData.email.trim()}
                   </span>
                 </p>
 
@@ -1073,8 +1063,8 @@ export function LoginView() {
                     className="text-indigo-600 font-extrabold hover:underline cursor-pointer text-right"
                   >
                     {otpChannel === 'mobile'
-                      ? `Send it by email to ${maskEmail(formData.email)} instead →`
-                      : `Send it by SMS to ${maskMobile(formData.mobileNumber)} instead →`}
+                      ? `Send it by email to ${formData.email.trim()} instead →`
+                      : `Send it by SMS to ${formData.mobileNumber.trim()} instead →`}
                   </button>
                 </div>
               </div>
