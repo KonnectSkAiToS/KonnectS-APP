@@ -14,6 +14,7 @@ import { RidesView } from './components/RidesView';
 import { ProfileView } from './components/ProfileView';
 import { WorkspaceHub } from './components/WorkspaceHub';
 import { LoginView } from './components/LoginView';
+import { MobileNumberGate } from './components/MobileNumberGate';
 import { WorkerView } from './components/WorkerView';
 import { GeminiAssistant } from './components/GeminiAssistant';
 import { ChatView } from './components/ChatView';
@@ -328,6 +329,7 @@ function AppContent() {
       <GlobalVoiceCommand />
       <DeveloperHUD />
       <ConflictResolutionModal />
+      <MobileNumberGate />
 
       {/* Floating Report Issue Trigger */}
       <div className="fixed right-6 bottom-40 z-45">
