@@ -6,3 +6,6 @@ coverage/
 *.log
 !.env.example
 config.bat
+
+# also matches a node_modules symlink (the "node_modules/" form only matches directories)
+node_modules
