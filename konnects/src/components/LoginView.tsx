@@ -11,6 +11,28 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db, firebaseConfig } from '../lib/firebase';
 import { haptics } from '../utils/haptics';
 
+// The OTP step is a simulation: the code is generated in the browser and nothing is actually sent.
+// It is therefore only available in development, or when explicitly enabled with VITE_SHOW_DEMO_OTP=true
+// (for testers). Production never displays the code or accepts the built-in test codes.
+const SHOW_DEMO_OTP =
+  Boolean((import.meta as any).env?.DEV) || (import.meta as any).env?.VITE_SHOW_DEMO_OTP === 'true';
+
+const isValidEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim());
+const isValidMobile = (v: string) => {
+  const digits = v.replace(/\D/g, '');
+  return /^\+?[0-9\s().-]+$/.test(v.trim()) && digits.length >= 7 && digits.length <= 15;
+};
+const maskEmail = (v: string) => {
+  const [user = '', domain = ''] = v.trim().split('@');
+  return `${user.slice(0, 2)}${'\u2022'.repeat(Math.max(user.length - 2, 2))}@${domain}`;
+};
+const maskMobile = (v: string) => {
+  const t = v.trim();
+  const digits = t.replace(/\D/g, '');
+  const prefix = t.startsWith('+') ? t.slice(0, 3) : '';
+  return `${prefix} ${'\u2022'.repeat(Math.max(digits.length - 3 - (prefix ? 2 : 0), 3))}${digits.slice(-3)}`.trim();
+};
+
 /** Password input with its own show/hide toggle (used for both password fields on sign-up). */
 function PasswordField({ name, placeholder, value, onChange, icon: Icon, autoComplete }: {
   name: string;
@@ -195,8 +217,20 @@ export function LoginView() {
         localStorage.setItem('lastUserEmail', finalEmail);
         localStorage.setItem('lastUserPass', formData.password);
       } else if (mode === 'signup') {
+        if (!SHOW_DEMO_OTP) {
+          throw new Error("Account creation with a verification code isn't available on this site yet.");
+        }
         if (signupStep === 1) {
           // Step 1 only validates the account details, then moves on to the profile step.
+          if (!isValidEmail(formData.email)) {
+            throw new Error("Please enter a valid email address.");
+          }
+          if (formData.mobileNumber.includes('@')) {
+            throw new Error("The mobile number field contains an email address. Please enter your phone number, e.g. +44 7700 900123.");
+          }
+          if (!isValidMobile(formData.mobileNumber)) {
+            throw new Error("Please enter a valid mobile number with country code, e.g. +44 7700 900123.");
+          }
           if (formData.password.length < 6) {
             throw new Error("Password must be at least 6 characters.");
           }
@@ -270,8 +304,11 @@ export function LoginView() {
       if (enteredCode.length < 6) {
         throw new Error("Please enter the complete 6-digit verification code.");
       }
+      if (!SHOW_DEMO_OTP) {
+        throw new Error("Verification codes can't be delivered on this site yet, so the account can't be created.");
+      }
       if (enteredCode !== generatedOtp && enteredCode !== '123456' && enteredCode !== '849201') {
-        throw new Error(`Invalid OTP code entered. Please enter ${generatedOtp} or use 123456.`);
+        throw new Error("Invalid OTP code. Please check the code and try again.");
       }
       localStorage.setItem('emailContactConsent', agreeEmailContact ? 'true' : 'false');
       localStorage.setItem('otpVerificationChannel', otpChannel);
@@ -774,6 +811,12 @@ export function LoginView() {
                 </p>
               </div>
 
+              {signupStep === 1 && !SHOW_DEMO_OTP && (
+                <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] font-medium leading-relaxed text-amber-800">
+                  Sign-up with email or SMS verification isn't available yet. Please use Google or Apple below, or check back soon.
+                </div>
+              )}
+
               {signupStep === 1 && (
                 <>
                   {/* One-tap sign-up */}
@@ -815,7 +858,7 @@ export function LoginView() {
                     </div>
                     <div className="relative">
                       <Phone size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                      <input name="mobileNumber" type="tel" placeholder="Mobile (e.g. +44...)" autoComplete="tel" value={formData.mobileNumber} onChange={handleChange} required className="w-full pl-11 pr-4 py-3 bg-slate-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand font-bold" />
+                      <input name="mobileNumber" type="tel" placeholder="Mobile (e.g. +44...)" inputMode="tel" autoComplete="tel" value={formData.mobileNumber} onChange={handleChange} required className="w-full pl-11 pr-4 py-3 bg-slate-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-brand font-bold" />
                     </div>
                     <PasswordField name="password" placeholder="Password" value={formData.password} onChange={handleChange} icon={Lock} autoComplete="new-password" />
                     <PasswordField name="confirmPassword" placeholder="Confirm Password" value={formData.confirmPassword} onChange={handleChange} icon={ShieldCheck} autoComplete="new-password" />
@@ -959,8 +1002,8 @@ export function LoginView() {
 
               <button 
                 type="submit" 
-                disabled={loading}
-                className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-slate-900/10 active:scale-95 transition-all text-xs cursor-pointer disabled:opacity-60"
+                disabled={loading || !SHOW_DEMO_OTP}
+                className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-slate-900/10 active:scale-95 transition-all text-xs cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {loading ? 'Processing...' : signupStep === 1 ? 'Continue' : 'Continue to OTP Verification'}
               </button>
@@ -998,31 +1041,40 @@ export function LoginView() {
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-black uppercase tracking-widest text-indigo-700">Verification Destination</span>
                   <span className="px-2 py-0.5 bg-indigo-600 text-white rounded-full text-[9px] font-black uppercase tracking-wider">
-                    {otpChannel === 'mobile' ? 'Mobile SMS' : 'Email Mailbox'}
+                    {otpChannel === 'mobile' ? 'Mobile SMS' : 'Email'}
                   </span>
                 </div>
 
                 <p className="text-xs text-indigo-950 font-medium leading-relaxed">
-                  We sent a 6-digit security OTP code to your {otpChannel === 'mobile' ? 'mobile number' : 'email address'}:
+                  {otpChannel === 'mobile'
+                    ? 'We sent a 6-digit security code by SMS to'
+                    : 'We sent a 6-digit security code by email to'}
                   <br />
-                  <span className="font-black text-indigo-700 text-sm">
-                    {otpChannel === 'mobile' ? (formData.mobileNumber || '+44 7700 900000') : (formData.email || 'user@example.com')}
+                  <span className="font-black text-indigo-700 text-sm break-all">
+                    {otpChannel === 'mobile' ? maskMobile(formData.mobileNumber) : maskEmail(formData.email)}
                   </span>
                 </p>
 
                 {/* Channel toggle option on verification screen */}
-                <div className="pt-2 border-t border-indigo-200/60 flex items-center justify-between text-[10px]">
-                  <span className="text-slate-500 font-bold">Wrong channel?</span>
+                <div className="pt-2 border-t border-indigo-200/60 flex items-center justify-between gap-3 text-[10px]">
+                  <span className="text-slate-500 font-bold shrink-0">Didn't get it?</span>
                   <button
                     type="button"
                     onClick={() => {
                       const nextChannel = otpChannel === 'mobile' ? 'email' : 'mobile';
                       setOtpChannel(nextChannel);
+                      // A new channel means a new code
+                      setGeneratedOtp(Math.floor(100000 + Math.random() * 900000).toString());
+                      setOtpDigits(['', '', '', '', '', '']);
+                      setResendCountdown(30);
+                      setError(null);
                       haptics.light();
                     }}
-                    className="text-indigo-600 font-extrabold hover:underline cursor-pointer"
+                    className="text-indigo-600 font-extrabold hover:underline cursor-pointer text-right"
                   >
-                    Send code to {otpChannel === 'mobile' ? 'Email' : 'Mobile SMS'} instead →
+                    {otpChannel === 'mobile'
+                      ? `Send it by email to ${maskEmail(formData.email)} instead →`
+                      : `Send it by SMS to ${maskMobile(formData.mobileNumber)} instead →`}
                   </button>
                 </div>
               </div>
@@ -1063,9 +1115,11 @@ export function LoginView() {
                 </div>
 
                 <div className="flex items-center justify-between text-[10px] pt-1 px-1">
-                  <span className="text-slate-400 font-bold">
-                    Demo OTP: <span className="font-mono font-black text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">{generatedOtp}</span>
-                  </span>
+                  {SHOW_DEMO_OTP ? (
+                    <span className="text-slate-400 font-bold">
+                      Demo OTP: <span className="font-mono font-black text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">{generatedOtp}</span>
+                    </span>
+                  ) : <span />}
                   <button
                     type="button"
                     onClick={handleResendOtp}
