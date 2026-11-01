@@ -64,7 +64,10 @@ service cloud.firestore {
                (!('premiumExpiryDate' in data) || data.premiumExpiryDate is string) &&
                (!('skills' in data) || data.skills is list) &&
                (!('verificationPhoto' in data) || data.verificationPhoto is string) &&
-               (!('featured' in data) || data.featured is bool);
+               (!('featured' in data) || data.featured is bool) &&
+               (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
+               (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 2048 && data.photoURL.matches('https://.*'))) &&
+               (!('hasCompletedTour' in data) || data.hasCompletedTour is bool);
       }
 
       allow read: if true;
@@ -82,8 +85,14 @@ service cloud.firestore {
           'priceDropNotificationsEnabled', 'quietHoursEnabled', 'quietHoursStart',
           'quietHoursEnd', 'accessibilityFontScale', 'accessibilityHighContrast',
           'darkMode', 'isPremiumWorker', 'premiumExpiryDate', 'skills', 
-          'verificationPhoto', 'featured'
+          'verificationPhoto', 'featured',
+          'displayName', 'photoURL', 'hasCompletedTour', 'email'
         ]) &&
+        // The profile email may only be set to the address the user is actually signed in with
+        (
+          !incoming().diff(existing()).affectedKeys().hasAny(['email']) ||
+          incoming().email == request.auth.token.email
+        ) &&
         // Security Guard: Prevent user from self-verifying to 'verified'
         (
           !incoming().diff(existing()).affectedKeys().hasAny(['verificationStatus']) ||
@@ -96,6 +105,25 @@ service cloud.firestore {
         (!incoming().diff(existing()).affectedKeys().hasAny(['updatedAt']) || 
          incoming().updatedAt == request.time)
       );
+    }
+
+
+    // ---------- 1.1 Login index ----------
+    // Lets the login screen resolve username/mobile -> email with a single `get`
+    // (no listing / scraping). Keys look like "u_<username>" or "m_<digits>".
+    match /login_index/{key} {
+      allow get: if true;
+      allow list: if false;
+      function isValidIndexEntry(data) {
+        return data.keys().hasOnly(['uid', 'email', 'username']) &&
+               data.uid == request.auth.uid &&
+               data.email == request.auth.token.email &&
+               key.size() <= 300;
+      }
+      // Create a new key, or re-write one you already own. You can never take over someone else's key.
+      allow create: if isSignedIn() && isValidIndexEntry(incoming());
+      allow update: if isOwner(existing().uid) && isValidIndexEntry(incoming());
+      allow delete: if isOwner(existing().uid);
     }
 
     // 2. Marketplace Item Rules

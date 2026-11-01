@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { haptics } from '../utils/haptics';
 import { useAuth } from '../contexts/AuthContext';
+import { isVoiceDebugEnabled, markTourCompletedLocally } from '../utils/tourState';
 
 interface GuidedTourProps {
   userId: string;
@@ -100,11 +101,15 @@ const TOUR_STEPS = [
 ];
 
 export function GuidedTour({ userId, onClose }: GuidedTourProps) {
-  const { profile } = useAuth();
+  const { profile, updateProfile } = useAuth();
   const [currentStep, setCurrentStep] = useState(0);
+
+  // The voice-rule debugging panel is only for developers (dev builds, or localStorage.konnects_debug = 'true').
+  const [showVoiceDebug] = useState(() => isVoiceDebugEnabled(Boolean((import.meta as any).env?.DEV)));
 
   // Determine user gender from profile or localStorage (fallback to 'male' for standard demo)
   const [overrideUserGender, setOverrideUserGender] = useState<'male' | 'female' | null>(() => {
+    if (!isVoiceDebugEnabled(Boolean((import.meta as any).env?.DEV))) return null;
     const saved = localStorage.getItem('konnects_demo_user_gender');
     return (saved === 'male' || saved === 'female') ? saved : null;
   });
@@ -254,6 +259,14 @@ export function GuidedTour({ userId, onClose }: GuidedTourProps) {
     };
   }, [currentStep, isVoiceOn, activeVoiceGender, speakCurrentStep]);
 
+  // Called when the tour is finished (Step N of N) or skipped: never auto-open again.
+  const markCompleted = () => {
+    markTourCompletedLocally(userId);
+    if (userId !== 'guest_user') {
+      updateProfile({ hasCompletedTour: true }).catch(() => { /* local flag still prevents a repeat on this device */ });
+    }
+  };
+
   // Step navigation handlers
   const handleNext = () => {
     haptics.light();
@@ -266,7 +279,7 @@ export function GuidedTour({ userId, onClose }: GuidedTourProps) {
     } else {
       haptics.success();
       stopSpeaking();
-      localStorage.setItem(`urbanNet_tour_completed_${userId}`, 'true');
+      markCompleted();
       onClose();
     }
   };
@@ -285,7 +298,7 @@ export function GuidedTour({ userId, onClose }: GuidedTourProps) {
   const handleSkip = () => {
     haptics.light();
     stopSpeaking();
-    localStorage.setItem(`urbanNet_tour_completed_${userId}`, 'true');
+    markCompleted();
     onClose();
   };
 
@@ -457,19 +470,21 @@ export function GuidedTour({ userId, onClose }: GuidedTourProps) {
                 </button>
               </div>
 
-              {/* Settings / Info popover toggle */}
-              <button
-                type="button"
-                onClick={() => setShowVoiceSettings(prev => !prev)}
-                title="Voice settings & user gender simulation"
-                className={`p-1.5 rounded-full border transition-all cursor-pointer ${
-                  showVoiceSettings 
-                    ? 'bg-indigo-600/30 text-indigo-300 border-indigo-500/60' 
-                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <SlidersHorizontal size={11} />
-              </button>
+              {/* Settings / Info popover toggle (developer-only: voice rules & test-gender simulation) */}
+              {showVoiceDebug && (
+                <button
+                  type="button"
+                  onClick={() => setShowVoiceSettings(prev => !prev)}
+                  title="Voice settings & user gender simulation"
+                  className={`p-1.5 rounded-full border transition-all cursor-pointer ${
+                    showVoiceSettings 
+                      ? 'bg-indigo-600/30 text-indigo-300 border-indigo-500/60' 
+                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <SlidersHorizontal size={11} />
+                </button>
+              )}
             </div>
 
             {/* Center: Step Indicator */}
@@ -487,6 +502,8 @@ export function GuidedTour({ userId, onClose }: GuidedTourProps) {
             </button>
           </div>
 
+          {showVoiceDebug && (
+          <>
           {/* Voice Gender Auto-Assignment Status Banner & Simulation Box */}
           <AnimatePresence>
             {showVoiceSettings && (
@@ -553,6 +570,8 @@ export function GuidedTour({ userId, onClose }: GuidedTourProps) {
               </motion.div>
             )}
           </AnimatePresence>
+          </>
+          )}
 
           {/* Voice active badge if no settings open */}
           {!showVoiceSettings && isVoiceOn && (

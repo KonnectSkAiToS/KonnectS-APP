@@ -117,6 +117,62 @@ describe('users', () => {
   });
 });
 
+// ================= PROFILE EDITING =================
+describe('profile editing fields', () => {
+  it('lets a user save their display name, picture and tour flag', async () => {
+    await seedUser('alice');
+    const ref = doc(as('alice'), 'users', 'alice');
+    await assertSucceeds(updateDoc(ref, { displayName: 'Ada Lovelace', fullName: 'Ada Lovelace', firstName: 'Ada', lastName: 'Lovelace' }));
+    await assertSucceeds(updateDoc(ref, { photoURL: 'https://firebasestorage.googleapis.com/v0/b/x/o/profile_pictures%2Falice?alt=media&token=t&v=1' }));
+    await assertSucceeds(updateDoc(ref, { hasCompletedTour: true }));
+  });
+
+  it('rejects a picture URL that is not https, or is not a string', async () => {
+    await seedUser('alice');
+    const ref = doc(as('alice'), 'users', 'alice');
+    await assertFails(updateDoc(ref, { photoURL: 'javascript:alert(1)' }));
+    await assertFails(updateDoc(ref, { photoURL: 'http://example.com/a.png' }));
+    await assertFails(updateDoc(ref, { photoURL: 12345 }));
+  });
+
+  it('rejects a non-boolean tour flag and an over-long display name', async () => {
+    await seedUser('alice');
+    const ref = doc(as('alice'), 'users', 'alice');
+    await assertFails(updateDoc(ref, { hasCompletedTour: 'yes' }));
+    await assertFails(updateDoc(ref, { displayName: 'x'.repeat(101) }));
+  });
+
+  it("does not let anyone edit another user's profile picture or tour flag", async () => {
+    await seedUser('alice');
+    await assertFails(updateDoc(doc(as('mallory'), 'users', 'alice'), { photoURL: 'https://evil.example/a.png' }));
+    await assertFails(updateDoc(doc(as('mallory'), 'users', 'alice'), { hasCompletedTour: true }));
+  });
+
+  it('only lets the profile email be set to the address the user is signed in with', async () => {
+    await seedUser('alice', { email: 'old@example.com' });
+    const ref = doc(as('alice'), 'users', 'alice'); // alice's token email is alice@example.com
+    await assertFails(updateDoc(ref, { email: 'someone-else@example.com' }));
+    await assertSucceeds(updateDoc(ref, { email: 'alice@example.com' }));
+  });
+});
+
+describe('username registry (login_index)', () => {
+  const entry = (uid: string, username: string) => ({ uid, email: `${uid}@example.com`, username });
+
+  it('lets you claim a free username and release your old one', async () => {
+    await seed((db) => setDoc(doc(db, 'login_index', 'u_ada_old'), entry('alice', 'ada_old')));
+    const db = as('alice');
+    await assertSucceeds(setDoc(doc(db, 'login_index', 'u_ada_new'), entry('alice', 'ada_new')));
+    await assertSucceeds(deleteDoc(doc(db, 'login_index', 'u_ada_old')));
+  });
+
+  it("blocks releasing or overwriting someone else's username", async () => {
+    await seed((db) => setDoc(doc(db, 'login_index', 'u_bob'), entry('bob', 'bob')));
+    await assertFails(deleteDoc(doc(as('alice'), 'login_index', 'u_bob')));
+    await assertFails(setDoc(doc(as('alice'), 'login_index', 'u_bob'), entry('alice', 'bob')));
+  });
+});
+
 // ================= LOGIN INDEX =================
 describe('login_index', () => {
   const entry = (uid: string) => ({ uid, email: `${uid}@example.com`, username: uid });

@@ -74,7 +74,10 @@ service cloud.firestore {
                (!('premiumExpiryDate' in data) || data.premiumExpiryDate is string) &&
                (!('skills' in data) || data.skills is list) &&
                (!('verificationPhoto' in data) || data.verificationPhoto is string) &&
-               (!('featured' in data) || data.featured is bool);
+               (!('featured' in data) || data.featured is bool) &&
+               (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
+               (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 2048 && data.photoURL.matches('https://.*'))) &&
+               (!('hasCompletedTour' in data) || data.hasCompletedTour is bool);
       }
 
       // Fields a user may set on their OWN profile at sign-up. Trust fields
@@ -110,6 +113,12 @@ service cloud.firestore {
                 incoming().verificationStatus in ['unverified', 'pending', 'in_progress', 'rejected']);
       }
 
+      // The email on the profile may only be set to the address the user is actually signed in with
+      // (Firebase only changes that after the new address has been verified by a link).
+      function emailIsSafe() {
+        return !changed().hasAny(['email']) || incoming().email == request.auth.token.email;
+      }
+
       // Signed-in users can fetch a single profile by uid (needed for chat, listings
       // and bookings) but cannot list/scan the collection. Admins can list.
       allow get: if isSignedIn();
@@ -134,11 +143,13 @@ service cloud.firestore {
           'priceDropNotificationsEnabled', 'quietHoursEnabled', 'quietHoursStart',
           'quietHoursEnd', 'accessibilityFontScale', 'accessibilityHighContrast',
           'darkMode', 'skills', 'verificationPhoto', 'loginCount',
-          'workHistory', 'pastProjects', 'certifications', 'hasUploadedDocs'
+          'workHistory', 'pastProjects', 'certifications', 'hasUploadedDocs',
+          'displayName', 'photoURL', 'hasCompletedTour', 'email'
         ]) &&
         pointsChangeIsSafe() &&
         loginCountIsSafe() &&
         verificationIsSafe() &&
+        emailIsSafe() &&
         isValidUser(incoming()) &&
         incoming().createdAt == existing().createdAt &&
         incoming().uid == existing().uid &&

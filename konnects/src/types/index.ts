@@ -19,6 +19,11 @@ export interface UserProfile {
   dateOfBirth?: string;
   gender?: string;
   avatarUrl?: string;
+  /** Profile picture download URL (Firebase Storage: profile_pictures/{uid}) */
+  photoURL?: string;
+  displayName?: string;
+  /** True once the user has finished or skipped the guided tour (synced across devices) */
+  hasCompletedTour?: boolean;
   mobileNumber?: string;
   bio?: string;
   isWorker: boolean;

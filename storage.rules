@@ -7,5 +7,15 @@ service firebase.storage {
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
     }
+
+    // Profile pictures: exactly one file per user at profile_pictures/{userId}.
+    // Only that user can upload or delete it; JPG, PNG or WebP, at most 5 MB.
+    match /profile_pictures/{userId} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null && request.auth.uid == userId
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp'];
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
   }
 }
