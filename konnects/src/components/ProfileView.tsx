@@ -4,18 +4,19 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { User, Settings, Shield, Award, CreditCard, Wrench, FileText, Share2, LogOut, Camera, ChevronRight, Copy, Check, MessageCircle, Mail, MapPin, MessageSquare, Heart, Trash2, ShoppingBag, ToggleLeft, ToggleRight, ArrowLeft, Leaf, RotateCw, X, ShieldCheck, CheckCircle, RefreshCw, Video, Activity, Wifi, Database, Cpu, HardDrive, Battery, Mic, Globe, Zap, Sparkles, Upload, AlertCircle } from 'lucide-react';
+import { User, Settings, Shield, Award, CreditCard, Wrench, FileText, Share2, LogOut, ChevronRight, Copy, Check, MessageCircle, Mail, MapPin, MessageSquare, Heart, Trash2, ShoppingBag, ToggleLeft, ToggleRight, ArrowLeft, Leaf, RotateCw, X, ShieldCheck, CheckCircle, RefreshCw, Video, Activity, Wifi, Database, Cpu, HardDrive, Battery, Mic, Globe, Zap, Sparkles, Upload, AlertCircle, Pencil } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage, Language } from '../contexts/LanguageContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import { UserAvatar } from './UserAvatar';
 import { getProfileInitials } from '../utils/avatarUtils';
-import { isUsernameTaken } from '../utils/usernameUtils';
 import { collection, query, where, getDocs, orderBy, doc, updateDoc, arrayRemove, onSnapshot, serverTimestamp, addDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { ServiceBooking, MarketplaceItem, WorkerType, UserProfile } from '../types';
 import { QuickSOS } from './QuickSOS';
 import { haptics } from '../utils/haptics';
+import { AvatarUploader, EditProfileForm, useToast } from '../features/profile';
+import { resetTourLocally } from '../utils/tourState';
 import { ExpenseInsight } from './ExpenseInsight';
 import { SettingsEditor } from './SettingsEditor';
 import { VerificationStatus } from './VerificationStatus';
@@ -301,16 +302,9 @@ Your transaction is secured with ISO-27001 standard.
     { id: 'm-ord-3', title: 'Vintage Copper Desk Lamp', price: 20, date: '28/05/2026', seller: 'Emma R.', condition: 'Slight Wear' }
   ]);
   
-  // Edit Profile State
-  const [editingName, setEditingName] = useState(profile?.username || '');
-  const [nameError, setNameError] = useState<string | null>(null);
-  const [isCheckingName, setIsCheckingName] = useState<boolean>(false);
-  const [firstName, setFirstName] = useState(profile?.firstName || '');
-  const [lastName, setLastName] = useState(profile?.lastName || '');
-  const [mobileNumber, setMobileNumber] = useState(profile?.mobileNumber || '');
-  const [hourlyRate, setHourlyRate] = useState(profile?.hourlyRate?.toString() || '');
+  // Online status (the personal-details form lives in features/profile/EditProfileForm)
   const [isOnline, setIsOnline] = useState(profile?.isOnline || false);
-  const [editingWorkerType, setEditingWorkerType] = useState<WorkerType>(profile?.workerType || 'other');
+  const { toast, ToastHost } = useToast();
 
   // Accessible Language and Referral Program state
   const [selectedLang, setSelectedLang] = useState(profile?.appLanguage || 'English (UK)');
@@ -610,7 +604,6 @@ Your transaction is secured with ISO-27001 standard.
       Promise.resolve().then(() => {
         if (active) {
           setIsOnline(profile.isOnline || false);
-          setEditingWorkerType(profile.workerType || 'other');
           if (profile.appLanguage) {
             setSelectedLang(profile.appLanguage);
           }
@@ -690,47 +683,6 @@ Your transaction is secured with ISO-27001 standard.
       active = false;
     };
   }, [view, fetchHistory, fetchSavedItems]);
-
-  const handleUpdateProfile = async () => {
-    setNameError(null);
-    const targetHandle = (editingName || profile?.username || 'kamal_sri').trim();
-
-    setIsCheckingName(true);
-    const check = await isUsernameTaken(targetHandle, profile?.uid, profile?.username);
-    setIsCheckingName(false);
-
-    if (check.isTaken) {
-      haptics.heavy();
-      setNameError(check.reason || `User ID handle '@${targetHandle}' is already taken by another account.`);
-      return;
-    }
-
-    const calculatedFullName = (firstName || lastName)
-      ? `${firstName} ${lastName}`.trim()
-      : (targetHandle || 'Kamal Sri');
-
-    const updates: Partial<UserProfile> = {
-      username: targetHandle,
-      firstName: firstName || profile?.firstName || '',
-      lastName: lastName || profile?.lastName || '',
-      fullName: calculatedFullName,
-      mobileNumber: mobileNumber || profile?.mobileNumber || '',
-      hourlyRate: Number(hourlyRate) || profile?.hourlyRate || 0,
-      workerType: editingWorkerType,
-      updatedAt: serverTimestamp() as any
-    };
-
-    try {
-      if (updateProfile) {
-        await updateProfile(updates);
-      }
-      setView('main');
-      haptics.success();
-    } catch (e) {
-      console.warn('Profile update notice:', e);
-      setView('main');
-    }
-  };
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -946,7 +898,7 @@ Your transaction is secured with ISO-27001 standard.
     { icon: Activity, label: t('profile.title').includes('Profile') ? 'Financial Monthly Breakdown' : 'আর্থিক মাসিক বিবরণী', value: 'financial', color: 'bg-indigo-50 text-indigo-700' },
     { icon: Shield, label: t('profile.title').includes('Profile') ? 'Worker Verification' : 'কর্মী যাচাইকরণ', value: 'verification', color: 'bg-blue-50 text-blue-600' },
     { icon: Cpu, label: t('profile.title').includes('Profile') ? 'Systems, Sync & Diagnostics' : 'সিস্টেম ও সিঙ্ক তথ্য', value: 'systems_dashboard', color: 'bg-emerald-50 text-emerald-700' },
-    { icon: Sparkles, label: t('profile.title').includes('Profile') ? 'Step-by-Step App Tour' : 'অ্যাপ নির্দেশিকা ট্যুর', value: 'launch_tour', color: 'bg-indigo-50 text-indigo-600' },
+    { icon: Sparkles, label: t('profile.title').includes('Profile') ? 'Restart Guided Tour' : 'অ্যাপ নির্দেশিকা ট্যুর', value: 'launch_tour', color: 'bg-indigo-50 text-indigo-600' },
     { icon: Settings, label: t('profile.title').includes('Profile') ? 'Appearance & Theme' : 'থিম সেটিংস', value: 'appearance', color: 'bg-violet-50 text-violet-600' },
     { icon: Settings, label: t('profile.title').includes('Profile') ? 'App Settings' : 'অ্যাপ সেটিংস', value: 'settings', color: 'bg-slate-50 text-slate-600' },
     { icon: Share2, label: t('profile.title').includes('Profile') ? 'Invite Friends' : 'বন্ধুদের আমন্ত্রণ জানান', value: 'invite', color: 'bg-emerald-50 text-emerald-600' },
@@ -1134,6 +1086,7 @@ Your transaction is secured with ISO-27001 standard.
 
   return (
     <div className="pb-24 pt-6 px-4 max-w-md mx-auto min-h-screen relative">
+      {ToastHost}
       <AnimatePresence mode="wait">
         {view === 'main' ? (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} key="main">
@@ -1213,30 +1166,28 @@ Your transaction is secured with ISO-27001 standard.
                </div>
 
                <div className="relative inline-block mb-4 mt-8">
-                 <UserAvatar
-                   avatarUrl={profile?.avatarUrl}
-                   firstName={profile?.firstName}
-                   lastName={profile?.lastName}
-                   fullName={profile?.fullName || profile?.username}
-                   username={profile?.username}
-                   className="w-24 h-24 rounded-[40px] shadow-xl shadow-slate-200/50 border-2 border-slate-100"
-                   badgeClassName="text-3xl font-black"
+                 <AvatarUploader
+                   toast={toast}
+                   avatarClassName="w-24 h-24 rounded-[40px] shadow-xl shadow-slate-200/50 border-2 border-slate-100"
+                   overlayClassName="rounded-[40px]"
                  />
                  {profile?.verificationStatus === 'verified' && (
                     <div className="absolute top-0 -right-2 bg-white rounded-full p-1 shadow-lg border border-slate-50">
                        <Shield size={20} className="text-emerald-500 fill-emerald-500/10" />
                     </div>
                  )}
-                 <button 
-                   onClick={() => setView('edit')}
-                   className="absolute -bottom-1 -right-1 p-2.5 bg-slate-900 text-white rounded-2xl border-4 border-slate-50 shadow-lg active:scale-90 transition-all"
-                 >
-                   <Camera size={16} />
-                 </button>
               </div>
               <div className="flex flex-col items-center">
                  <h1 className="text-2xl font-bold tracking-tight mb-1">{profile?.username}</h1>
                  <p className="text-slate-400 text-xs font-medium">{profile?.email}</p>
+                 <button
+                   type="button"
+                   onClick={() => { haptics.light(); setView('edit'); }}
+                   className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 bg-white border border-slate-200 rounded-full text-[11px] font-bold text-slate-700 shadow-sm hover:bg-slate-50 active:scale-95 transition-all cursor-pointer"
+                 >
+                   <Pencil size={12} />
+                   <span>Edit Profile</span>
+                 </button>
                   
                   {/* Visual verification badge that updates based on document approval status */}
                   <div className="mt-2.5 flex justify-center">
@@ -1518,6 +1469,8 @@ Your transaction is secured with ISO-27001 standard.
                    whileTap={{ scale: 0.98 }}
                    onClick={() => {
                      if (item.value === 'launch_tour') {
+                       // Forget "completed" in this browser, then open the tour right away
+                       resetTourLocally(user?.uid || 'guest_user');
                        window.dispatchEvent(new CustomEvent('launch-guided-tour'));
                      } else if (item.value === 'feedback_trigger') {
                        setShowFeedbackModal(true);
@@ -1559,94 +1512,16 @@ Your transaction is secured with ISO-27001 standard.
 
              {/* Dynamic Content based on view */}
              {view === 'edit' && (
-                <div className="space-y-6">
-                   <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">First Name</label>
-                        <input 
-                          value={firstName}
-                          onChange={(e) => setFirstName(e.target.value)}
-                          placeholder="John"
-                          className="w-full p-4 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-sm"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Last Name</label>
-                        <input 
-                          value={lastName}
-                          onChange={(e) => setLastName(e.target.value)}
-                          placeholder="Doe"
-                          className="w-full p-4 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-sm"
-                        />
-                      </div>
-                   </div>
-                   <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">User ID / Username Handle</label>
-                      <div className="relative">
-                        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">@</span>
-                        <input 
-                          value={editingName}
-                          onChange={(e) => {
-                            setEditingName(e.target.value);
-                            if (nameError) setNameError(null);
-                          }}
-                          className={`w-full p-4 pl-8 bg-slate-50 rounded-2xl outline-none transition-all font-bold text-sm ${
-                            nameError 
-                              ? 'border-2 border-rose-500 text-rose-600 bg-rose-50/20 ring-2 ring-rose-500/20' 
-                              : 'focus:ring-2 focus:ring-brand'
-                          }`}
-                        />
-                      </div>
-                      {nameError && (
-                        <p className="mt-1 text-[10.5px] font-bold text-rose-500 flex items-center space-x-1.5 animate-pulse ml-1">
-                          <AlertCircle size={13} className="shrink-0" />
-                          <span>{nameError}</span>
-                        </p>
-                      )}
-                   </div>
-                   <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Mobile Number</label>
-                      <input 
-                        value={mobileNumber}
-                        onChange={(e) => setMobileNumber(e.target.value)}
-                        placeholder="+44 7700 900XXX"
-                        className="w-full p-4 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-sm"
-                      />
-                   </div>
-                   {profile?.isWorker && (
-                      <div className="space-y-4 pt-2 border-t border-slate-100">
-                         <div className="space-y-2">
-                           <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Hourly Rate (£)</label>
-                           <input 
-                             type="number"
-                             value={hourlyRate}
-                             onChange={(e) => setHourlyRate(e.target.value)}
-                             placeholder="25"
-                             className="w-full p-4 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-sm"
-                           />
-                         </div>
-                         <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Worker Speciality</label>
-                          <select 
-                            value={editingWorkerType}
-                            onChange={(e) => setEditingWorkerType(e.target.value as WorkerType)}
-                            className="w-full p-4 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-sm appearance-none"
-                          >
-                             {['plumber', 'mechanic', 'doctor', 'electrician', 'cleaner', 'cab_owner', 'other'].map(t => (
-                               <option key={t} value={t}>{t.replace('_', ' ').toUpperCase()}</option>
-                             ))}
-                          </select>
-                       </div>
-                    </div>
-                   )}
-                   <button 
-                    onClick={handleUpdateProfile}
-                    className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold shadow-xl shadow-slate-900/10 active:scale-95 transition-all text-xs uppercase tracking-widest"
-                   >
-                     Update Profile
-                   </button>
+              <motion.div initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -20, opacity: 0 }} key="edit">
+                <div className="flex items-center space-x-3 mb-6">
+                  <button type="button" aria-label="Back" onClick={() => setView('main')} className="p-2 bg-white rounded-xl shadow-sm border border-slate-100 cursor-pointer">
+                    <ArrowLeft size={18} />
+                  </button>
+                  <h2 className="text-xl font-bold tracking-tight">Edit Profile</h2>
                 </div>
-             )}
+                <EditProfileForm toast={toast} onDone={() => setView('main')} />
+              </motion.div>
+            )}
 
              {(view === 'history' || view === 'receipts') && renderHistory(view === 'receipts')}
 

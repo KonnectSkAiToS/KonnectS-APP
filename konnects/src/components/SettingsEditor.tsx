@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { haptics } from '../utils/haptics';
+import { resetTourLocally } from '../utils/tourState';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage, Language } from '../contexts/LanguageContext';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
@@ -2088,8 +2089,8 @@ export function SettingsEditor() {
                   onClick={() => {
                     haptics.light();
                     const userId = profile?.uid || 'guest_user';
-                    localStorage.removeItem(`urbanNet_tour_completed_${userId}`);
-                    localStorage.removeItem('urbanNet_tour_completed_guest_user');
+                    resetTourLocally(userId);
+                    resetTourLocally('guest_user');
                     window.dispatchEvent(new CustomEvent('launch-guided-tour'));
                     triggerSaveNotification('Tour progress reset! Re-playing step-by-step guide...');
                   }}

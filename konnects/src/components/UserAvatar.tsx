@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { getProfileInitials } from '../utils/avatarUtils';
 
 interface UserAvatarProps {
@@ -21,12 +21,15 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
   badgeClassName = "text-sm font-black"
 }) => {
   const initials = getProfileInitials(firstName, lastName, fullName, username);
+  // Remember which URL failed to load so we show initials instead of a broken image
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
 
-  if (avatarUrl && avatarUrl.trim() !== '' && !avatarUrl.startsWith('initials:')) {
+  if (avatarUrl && avatarUrl.trim() !== '' && !avatarUrl.startsWith('initials:') && failedUrl !== avatarUrl) {
     return (
       <img
         src={avatarUrl}
         alt={fullName || username || 'User Avatar'}
+        onError={() => setFailedUrl(avatarUrl)}
         className={`${className} object-cover shadow-xs border border-slate-200/60 dark:border-slate-800`}
       />
     );

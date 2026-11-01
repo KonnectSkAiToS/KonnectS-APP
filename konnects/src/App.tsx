@@ -25,6 +25,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { startBookingNotificationListener, listenToRideLocalChanges, NotificationItem, startScheduledRideNotificationChecker, snoozeNotifications } from './services/notificationService';
 import { Bell, AlertCircle, Check, Bug } from 'lucide-react';
 import { GuidedTour } from './components/GuidedTour';
+import { shouldAutoShowTour } from './utils/tourState';
+import { useProfileSelfHealing } from './features/profile';
 import { startRealtimeDbSync } from './services/dbSyncService';
 import { ReportIssueModal } from './components/ReportIssueModal';
 import { haptics } from './utils/haptics';
@@ -38,6 +40,7 @@ type Tab = 'home' | 'showcase' | 'marketplace' | 'services' | 'rides' | 'profile
 
 function AppContent() {
   const { user, profile, loading } = useAuth();
+  useProfileSelfHealing();
   const [activeTab, setActiveTabState] = useState<Tab>(() => {
     try {
       const saved = localStorage.getItem('user_default_home_tab') || localStorage.getItem('urbanNet_default_tab');
@@ -155,17 +158,21 @@ function AppContent() {
     return () => window.removeEventListener('launch-guided-tour', handleLaunchTour);
   }, []);
 
-  // Handle tour popup trigger for first-time logged in OR guest users
+  // Open the guided tour by itself ONLY for people who have never completed or skipped it:
+  // checks profile.hasCompletedTour (Firestore, follows the user across devices) and the local flags.
+  // Waits for the profile to load, and for the "add your mobile number" prompt to be done first.
+  const tourUid = user?.uid;
+  const tourProfileReady = !loading && !!user && !!profile && profile.uid === user.uid;
+  const tourCompletedOnProfile = profile?.hasCompletedTour === true;
+  const tourNeedsMobile = !profile?.mobileNumber?.trim();
   useEffect(() => {
-    const tourUserId = user?.uid || 'guest_user';
-    const isCompleted = localStorage.getItem(`urbanNet_tour_completed_${tourUserId}`) === 'true';
-    const forceAlways = localStorage.getItem('konnects_auto_tour_on_start') === 'true';
-    if (!isCompleted || forceAlways) {
-      // Delay slightly for smooth modal entrance trigger
-      const handle = setTimeout(() => setShowGuidedTour(true), 1200);
-      return () => clearTimeout(handle);
-    }
-  }, [user]);
+    if (!tourUid || !tourProfileReady || tourNeedsMobile) return;
+    const forceAlways = localStorage.getItem('konnects_auto_tour_on_start') === 'true'; // explicit opt-in in Settings
+    if (!forceAlways && !shouldAutoShowTour(tourUid, { hasCompletedTour: tourCompletedOnProfile })) return;
+    // Delay slightly for smooth modal entrance trigger
+    const handle = setTimeout(() => setShowGuidedTour(true), 1200);
+    return () => clearTimeout(handle);
+  }, [tourUid, tourProfileReady, tourCompletedOnProfile, tourNeedsMobile]);
 
   const [isLowBattery, setIsLowBattery] = useState(false);
 

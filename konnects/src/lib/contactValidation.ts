@@ -11,3 +11,8 @@ export function isValidMobile(value: string): boolean {
 export function cleanMobile(value: string): string {
   return value.trim().replace(/\s+/g, ' ');
 }
+
+/** Practical email check (one @, a dot in the domain, no spaces). Firebase does the final validation. */
+export function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value.trim());
+}
